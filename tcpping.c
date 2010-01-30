@@ -490,6 +490,8 @@ int main(int argc, char *argv[])
             if (--count == 0) {
                 /* tell child to display stats */
                 kill(child_pid, SIGINT);
+                /* make sure we wait until it died and closed */
+                kill(getpid(), SIGINT);
                 break;
             }
 
