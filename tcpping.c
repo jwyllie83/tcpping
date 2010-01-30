@@ -71,6 +71,8 @@ int total_synacks = 0;
 int total_rsts = 0;
 int successful_pings = 0;
 
+/* Global handle to libnet -- libnet1 requires only one instantiation per process */
+libnet_t *l;
 
 void handle_sigalrm(int junk)
 {
@@ -82,6 +84,7 @@ void handle_sigalrm(int junk)
 void handle_sigint(int junk)
 {
     waitpid(child_pid, NULL, 0);
+    libnet_destroy(l);
     exit(0);
 }
 
@@ -275,19 +278,13 @@ void sniffPackets(char *devName)
 }
 
 /* use libnet to determine what device we'll be using to get to
- * dest_ip */
+ * dest_ip 
+ * WARNING:  This function will wreck your libnet stack! we
+ * therefore only call it in the child process */
 char *findDevice()
 {
-    libnet_t *l;
     libnet_ptag_t t;
     char *deviceName;
-    char errbuf[LIBNET_ERRBUF_SIZE];
-
-    l = libnet_init(LIBNET_RAW4, NULL, errbuf);
-    if (l == NULL) {
-        fprintf(stderr, "libnet_init: %s", errbuf);
-        exit(1); 
-    }
 
     t = libnet_autobuild_ipv4(
         LIBNET_IPV4_H + LIBNET_TCP_H, /* length */
@@ -301,23 +298,13 @@ char *findDevice()
 
     deviceName = strdup((char *)libnet_getdevice(l));
 
-    libnet_destroy(l);
-
     return deviceName;
 }
 
 void injectSYNPacket(int sequence)
 {
     int c;
-    libnet_t *l;
     libnet_ptag_t t;
-    char errbuf[LIBNET_ERRBUF_SIZE];
-
-    l = libnet_init(LIBNET_RAW4, NULL, errbuf);
-    if (l == NULL) {
-        fprintf(stderr, "libnet_init: %s", errbuf);
-        exit(1); 
-    }
 	
     /* custom TCP header */
     /* we use the sequence to number the packets */
@@ -356,8 +343,6 @@ void injectSYNPacket(int sequence)
         fprintf(stderr, "libnet_write: %s\n", libnet_geterror(l));
         exit(1);
     }
-
-    libnet_destroy(l);
 }
 
 void usage()
@@ -433,13 +418,18 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    if (!deviceName) {
-        deviceName = findDevice();
+    /* set up the libnet pointer and stack */
+    char errbuf[LIBNET_ERRBUF_SIZE];
+
+    l = libnet_init(LIBNET_RAW4, NULL, errbuf);
+    if (l == NULL) {
+        fprintf(stderr, "libnet_init: %s", errbuf);
+        exit(1); 
     }
 
     dest_name = he->h_name;
-    printf("TCP PING %s (%s:%u) on %s\n", dest_name, 
-           inet_ntoa2(dest_ip), dest_port, deviceName);
+    printf("TCP PING %s (%s:%u)\n", dest_name, 
+           inet_ntoa2(dest_ip), dest_port);
 
     /* start seq# somewhere random so we're not SO obvious */
     srandom(time(NULL));
@@ -511,6 +501,11 @@ int main(int argc, char *argv[])
         notify_fd = pipefds[1];
 
         signal(SIGINT, print_stats);
+
+	/* Find the name of the device to listen on */
+	if (!deviceName) {
+	    deviceName = findDevice();
+	}
 
         sniffPackets(deviceName);
     }
