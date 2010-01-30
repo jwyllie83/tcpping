@@ -73,6 +73,8 @@ int successful_pings = 0;
 
 /* Global handle to libnet -- libnet1 requires only one instantiation per process */
 libnet_t *l;
+libnet_ptag_t tcp_pkt;
+libnet_ptag_t ip_pkt;
 
 void handle_sigalrm(int junk)
 {
@@ -304,11 +306,10 @@ char *findDevice()
 void injectSYNPacket(int sequence)
 {
     int c;
-    libnet_ptag_t t;
-	
+
     /* custom TCP header */
     /* we use the sequence to number the packets */
-    t = libnet_build_tcp(
+    tcp_pkt = libnet_build_tcp(
         random() % 65536,                 /* source port */
         dest_port,                        /* destination port */
         sequence_offset + (sequence*100), /* sequence number */
@@ -321,18 +322,28 @@ void injectSYNPacket(int sequence)
         NULL,                             /* payload */
         0,                                /* payload size */
         l,                                /* libnet handle */
-        0);                               /* libnet id */
-    if (t == -1) {
+        tcp_pkt);                         /* libnet packet ref */
+    if (tcp_pkt == -1) {
         fprintf(stderr, "libnet_build_tcp: %s\n", libnet_geterror(l));
         exit(1);
     }
 
-    t = libnet_autobuild_ipv4(
-        LIBNET_IPV4_H + LIBNET_TCP_H, /* length */
-        IPPROTO_TCP,                  /* protocol */
-        dest_ip,                      /* destination IP */
-        l);                           /* libnet handle */
-    if (t == -1) {
+    /* custom IP header; I couldn't get autobuild_ipv4 to work */
+    ip_pkt = libnet_build_ipv4(
+         LIBNET_IPV4_H + LIBNET_TCP_H,        /* packet length */
+         0,                                   /* tos */
+	 htons((l->ptag_state) & 0x0000ffff), /* IP id */
+	 0,                                   /* fragmentation */
+	 64,                                  /* TTL */
+	 IPPROTO_TCP,                         /* encap protocol */
+	 0,                                   /* checksum */
+	 libnet_get_ipaddr4(l),               /* source IP */
+	 dest_ip,                             /* destination IP */
+         NULL,                                /* payload */
+	 0,                                   /* payload size */
+	 l,                                   /* libnet pointer */
+	 ip_pkt);                             /* libnet packet ref */
+    if (ip_pkt == -1) {
         fprintf(stderr, "libnet_autobuild_ipv4: %s\n", libnet_geterror(l));
         exit(1);
     }
