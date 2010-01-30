@@ -1,5 +1,6 @@
 /*
 Copyright (c) 2004, Steven Kehlet
+Copyright (c) 2010, Jim Wyllie
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
