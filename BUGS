@@ -51,3 +51,7 @@ Capturing on eth0 (this is the outbound interface on the machine running tcpping
  13.584060  192.168.0.3 -> 10.0.1.3  TCP 25416 > http [RST] Seq=1 Win=0 Len=0
  14.183978  10.0.1.3 -> 192.168.0.3  TCP http > 14954 [SYN, ACK] Seq=0 Ack=1 Win=5840 Len=0 MSS=1460
  14.183998  192.168.0.3 -> 10.0.1.3  TCP 14954 > http [RST] Seq=1 Win=0 Len=0
+
+A good fix would be to put outstanding ping sequences on a stack and pop them
+off when the "expire," for some definition of "expire" that I haven't come up
+with yet.

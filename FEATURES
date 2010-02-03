@@ -1,0 +1,4 @@
+- Add more options from ping, prioritized with usefulness x ease of implementation
+- Add a manpage
+- Secure for setuid use (like regular ping)
+- Package for various Linux OSes (Debian, Fedora, etc)
