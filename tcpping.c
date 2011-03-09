@@ -1,6 +1,7 @@
 /*
 Copyright (c) 2004, Steven Kehlet
-Copyright (c) 2010, Jim Wyllie
+Copyright (c) 2010, 2011, Jim Wyllie
+Copyright (c) 2011, Ethan Blanton
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -42,6 +43,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define __FAVOR_BSD
 #endif
 #include <netinet/tcp.h>
+#include <netinet/ip_icmp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <signal.h>
@@ -53,12 +55,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define tcp_flag_isset(tcpptr, flag) (((tcpptr->th_flags) & (flag)) == (flag))
 
 int timeout = 2;
+int ttl = 64;
 char *myname;
 pid_t child_pid;
 int keep_going = 1;
 int verbose = 0;
 int notify_fd;
-struct timeval tv_syn, tv_synack;
+struct timeval tv_syn, tv_synack, tv_timxceed;
 int sequence_offset = 0;
 char *dest_name;
 in_addr_t dest_ip = 0;
@@ -124,18 +127,26 @@ void showPacket(struct ip *ip, struct tcphdr *tcp)
         perror("gettimeofday");
         exit(1);
     }
-    snprintf(flags, sizeof(flags), "[%s%s%s%s%s%s]", 
-             (tcp_flag_isset(tcp, TH_FIN) ? "F" : ""),
-             (tcp_flag_isset(tcp, TH_SYN) ? "S" : ""),
-             (tcp_flag_isset(tcp, TH_RST) ? "R" : ""),
-             (tcp_flag_isset(tcp, TH_PUSH) ? "P" : ""),
-             (tcp_flag_isset(tcp, TH_ACK) ? "A" : ""),
-             (tcp_flag_isset(tcp, TH_URG) ? "U" : "")
-             );
+    if (tcp) {
+        snprintf(flags, sizeof(flags), "[%s%s%s%s%s%s]", 
+                 (tcp_flag_isset(tcp, TH_FIN) ? "F" : ""),
+                 (tcp_flag_isset(tcp, TH_SYN) ? "S" : ""),
+                 (tcp_flag_isset(tcp, TH_RST) ? "R" : ""),
+                 (tcp_flag_isset(tcp, TH_PUSH) ? "P" : ""),
+                 (tcp_flag_isset(tcp, TH_ACK) ? "A" : ""),
+                 (tcp_flag_isset(tcp, TH_URG) ? "U" : "")
+                 );
+    }
     printf("%ld.%ld", tv.tv_sec, tv.tv_usec);
-    printf(" %s:%d", inet_ntoa(ip->ip_src), ntohs(tcp->th_sport));
-    printf(" -> %s:%d", inet_ntoa(ip->ip_dst), ntohs(tcp->th_dport));
-    printf(" %s\n", flags);
+    printf(" %s", inet_ntoa(ip->ip_src));
+    if (tcp) {
+        printf(":%d", ntohs(tcp->th_sport));
+    }
+    printf(" -> %s", inet_ntoa(ip->ip_dst));
+    if (tcp) {
+        printf(":%d %s", ntohs(tcp->th_dport), flags);
+    }
+    printf("\n");
 }
 
 /* callback to pcap_loop() */
@@ -145,6 +156,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
     struct ether_header *ethernet;
     struct ip *ip;
     struct tcphdr *tcp;
+    struct icmp *icmp;
     u_char *payload;
     float ms;
     char *units = "ms";
@@ -157,13 +169,15 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
     ethernet = (struct ether_header*)(packet);
     ip = (struct ip*)(packet + size_ethernet);
     tcp = (struct tcphdr*)(packet + size_ethernet + size_ip);
+    icmp = (struct icmp*)(packet + size_ethernet + size_ip);
     payload = (u_char *)(packet + size_ethernet + size_ip + size_tcp);
 
     if (verbose) {
-        showPacket(ip, tcp);
+        showPacket(ip, ip->ip_p == IPPROTO_TCP ? tcp : NULL);
     }
 
-    if (ip->ip_dst.s_addr == dest_ip && tcp_flag_isset(tcp, TH_SYN)) {
+    if (ip->ip_dst.s_addr == dest_ip && ip->ip_p == IPPROTO_TCP &&
+        tcp_flag_isset(tcp, TH_SYN)) {
         /* SYN from us */
         r = gettimeofday(&tv_syn, NULL);
         if (r < 0) {
@@ -172,7 +186,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
         }
         total_syns++;
 
-    } else if (ip->ip_src.s_addr == dest_ip &&
+    } else if (ip->ip_src.s_addr == dest_ip && ip->ip_p == IPPROTO_TCP &&
                ((tcp_flag_isset(tcp, TH_SYN) && tcp_flag_isset(tcp, TH_ACK)) || 
                 tcp_flag_isset(tcp, TH_RST))) {
         /* SYN/ACK or RST from the other guy */
@@ -217,6 +231,41 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 
         /* tell parent to continue */
         write(notify_fd, "foo", 3);
+    } else if (ip->ip_dst.s_addr == libnet_get_ipaddr4(l) &&
+               ip->ip_p == IPPROTO_ICMP && icmp->icmp_type == ICMP_TIMXCEED) {
+        /* Examine this packet to see if it's a time exceeded from one of our
+         * probes. */
+        struct ip *retip;
+        struct tcphdr *rettcp;
+
+        retip = (struct ip*)(packet + size_ethernet + size_ip + 8);
+        rettcp = (struct tcphdr *)(packet + size_ethernet + size_ip + 8 + size_ip);
+        if (retip->ip_dst.s_addr == dest_ip && retip->ip_p == IPPROTO_TCP &&
+            tcp_flag_isset(rettcp, TH_SYN)) {
+            r = gettimeofday(&tv_timxceed, NULL);
+            if (r < 0) {
+                perror("gettimeofday");
+                exit(1);
+            }
+
+            ms = (tv_timxceed.tv_sec - tv_syn.tv_sec) * 1000;
+            ms += (tv_timxceed.tv_usec - tv_syn.tv_usec)*1.0/1000;
+
+            if (ms > 1000) {
+                units = "s";
+                ms /= 1000;
+            }
+
+            /* Extracting the sequence number would be unreliable as only
+             * 64 bits of the TCP header are required to be present. */
+            printf("Time to live exceeded from %s: ttl=%d time=%.3f%s\n",
+                   inet_ntoa(ip->ip_src),
+                   ip->ip_ttl,
+                   ms, units);
+
+            /* tell parent to continue */
+            write(notify_fd, "foo", 3);
+        }
     }
 }
 
@@ -238,7 +287,7 @@ void sniffPackets(char *devName)
          exit(1);
      }
      
-     handle = pcap_open_live(devName, BUFSIZ, 1, 0, errbuf);
+     handle = pcap_open_live(devName, BUFSIZ, 0, 0, errbuf);
      if (!handle) {
          fprintf(stderr, "pcap_open_live: %s\n", errbuf);
          exit(1);
@@ -258,7 +307,8 @@ void sniffPackets(char *devName)
 
      /* compile and apply the filterExpr */
      snprintf(filterExpr, sizeof(filterExpr), 
-              "host %s and port %u", inet_ntoa2(dest_ip), dest_port);
+              "(host %s and port %u) or icmp[icmptype] == icmp-timxceed",
+              inet_ntoa2(dest_ip), dest_port);
      r = pcap_compile(handle, &filter, filterExpr, 0, mask);
      if (r < 0) {
          fprintf(stderr, "pcap_compile: %s\n", pcap_geterr(handle));
@@ -335,7 +385,7 @@ void injectSYNPacket(int sequence)
          0,                                   /* tos */
 	 htons((l->ptag_state) & 0x0000ffff), /* IP id */
 	 0,                                   /* fragmentation */
-	 64,                                  /* TTL */
+	 ttl,                                 /* TTL */
 	 IPPROTO_TCP,                         /* encap protocol */
 	 0,                                   /* checksum */
 	 libnet_get_ipaddr4(l),               /* source IP */
@@ -359,7 +409,7 @@ void injectSYNPacket(int sequence)
 
 void usage()
 {
-    fprintf(stderr, "%s: [-v] [-c count] [-p port] [-i interval] [-I interface] [-W timeout] remote_host\n", myname);
+    fprintf(stderr, "%s: [-v] [-c count] [-p port] [-i interval] [-I interface] [-W timeout] [-t ttl] remote_host\n", myname);
     exit(0);
 }
 
@@ -378,7 +428,7 @@ int main(int argc, char *argv[])
 
     myname = argv[0];
 
-    while ((c = getopt(argc, argv, "c:p:i:vI:W:")) != -1) {
+    while ((c = getopt(argc, argv, "c:p:i:vI:W:t:")) != -1) {
         switch (c) {
             case 'c':
                 count = atoi(optarg);
@@ -397,6 +447,9 @@ int main(int argc, char *argv[])
                 break;
             case 'W':
                 timeout = atoi(optarg);
+                break;
+            case 't':
+                ttl = atoi(optarg);
                 break;
             default:
                 usage();
