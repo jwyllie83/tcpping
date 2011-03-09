@@ -32,6 +32,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <pcap.h>
 #include <sys/ioctl.h>
 #include <net/ethernet.h>
@@ -80,6 +81,17 @@ libnet_t *l;
 libnet_ptag_t tcp_pkt;
 libnet_ptag_t ip_pkt;
 
+/* There are problems with duplicate SYN/ACK packets and other oddities with
+ * firewalls and established connections.  Rather than solve all of them, I'm
+ * just going to count the first sequence-number response and ignore all
+ * others.
+ * 
+ * Rather than store state for all results, we'll just have rolling state for a
+ * 32-bit bitmask.  I guess something can go wrong but it will definitely be
+ * more accurate than what we have today with negative loss rates :)
+ */
+int32_t seen_response_bitflags = 0;
+
 void handle_sigalrm(int junk)
 {
     /* do nothing */
@@ -92,6 +104,25 @@ void handle_sigint(int junk)
     waitpid(child_pid, NULL, 0);
     libnet_destroy(l);
     exit(0);
+}
+
+/* Some functions relating to keeping track of sequence state */
+
+int tcpseq_to_orderseq(int tcpseq)
+{
+    return (int)((tcpseq - sequence_offset) / 100);
+}
+
+void set_seenflag(int tcpseq, int flag)
+{
+    int orderseq = tcpseq_to_orderseq(tcpseq);
+    seen_response_bitflags = seen_response_bitflags | ((flag > 0 ? 1 : 0) << orderseq % 32);
+}
+
+int get_seenflag(int tcpseq)
+{
+    int orderseq = tcpseq_to_orderseq(tcpseq);
+    return ((seen_response_bitflags >> (orderseq % 32)) & 1);
 }
 
 void print_stats(int junk)
@@ -189,12 +220,21 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
     } else if (ip->ip_src.s_addr == dest_ip && ip->ip_p == IPPROTO_TCP &&
                ((tcp_flag_isset(tcp, TH_SYN) && tcp_flag_isset(tcp, TH_ACK)) || 
                 tcp_flag_isset(tcp, TH_RST))) {
-        /* SYN/ACK or RST from the other guy */
+        /* SYN/ACK, RST, or ICMP Exceeded from the other guy */
         r = gettimeofday(&tv_synack, NULL);
         if (r < 0) {
             perror("gettimeofday");
             exit(1);
         }
+
+    /* If we've seen this particular packet, back out of the room slowly
+     * and close the door */
+    if ((ip->ip_p == IPPROTO_TCP) && get_seenflag(ntohl(tcp->th_ack))) {
+        if (verbose) {
+            printf("Ignored packet; already seen one with seq=%d\n", tcpseq_to_orderseq(ntohl(tcp->th_ack)));
+            return;
+        }
+    }
 
         ms = (tv_synack.tv_sec - tv_syn.tv_sec) * 1000;
         ms += (tv_synack.tv_usec - tv_syn.tv_usec)*1.0/1000;
@@ -215,7 +255,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
         printf("%s from %s: seq=%u ttl=%d time=%.3f%s\n", 
                flags,
                inet_ntoa(ip->ip_src), 
-               (ntohl(tcp->th_ack) - sequence_offset)/100,
+               tcpseq_to_orderseq(ntohl(tcp->th_ack)),
                ip->ip_ttl,
                ms, units);
 
@@ -228,6 +268,9 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
         
         avg_ping = ((avg_ping * successful_pings) + ms)/(successful_pings+1);
         successful_pings++;
+
+    /* Mark that we saw this packet */
+    set_seenflag(ntohl(tcp->th_ack), 1);
 
         /* tell parent to continue */
         write(notify_fd, "foo", 3);
@@ -383,17 +426,17 @@ void injectSYNPacket(int sequence)
     ip_pkt = libnet_build_ipv4(
          LIBNET_IPV4_H + LIBNET_TCP_H,        /* packet length */
          0,                                   /* tos */
-	 htons((l->ptag_state) & 0x0000ffff), /* IP id */
-	 0,                                   /* fragmentation */
-	 ttl,                                 /* TTL */
-	 IPPROTO_TCP,                         /* encap protocol */
-	 0,                                   /* checksum */
-	 libnet_get_ipaddr4(l),               /* source IP */
-	 dest_ip,                             /* destination IP */
+     htons((l->ptag_state) & 0x0000ffff), /* IP id */
+     0,                                   /* fragmentation */
+     ttl,                                 /* TTL */
+     IPPROTO_TCP,                         /* encap protocol */
+     0,                                   /* checksum */
+     libnet_get_ipaddr4(l),               /* source IP */
+     dest_ip,                             /* destination IP */
          NULL,                                /* payload */
-	 0,                                   /* payload size */
-	 l,                                   /* libnet pointer */
-	 ip_pkt);                             /* libnet packet ref */
+     0,                                   /* payload size */
+     l,                                   /* libnet pointer */
+     ip_pkt);                             /* libnet packet ref */
     if (ip_pkt == -1) {
         fprintf(stderr, "libnet_autobuild_ipv4: %s\n", libnet_geterror(l));
         exit(1);
@@ -405,6 +448,9 @@ void injectSYNPacket(int sequence)
         fprintf(stderr, "libnet_write: %s\n", libnet_geterror(l));
         exit(1);
     }
+
+    /* Mark that we're waiting for this packet */
+    set_seenflag(sequence_offset + (sequence*100), 0);
 }
 
 void usage()
@@ -567,10 +613,10 @@ int main(int argc, char *argv[])
 
         signal(SIGINT, print_stats);
 
-	/* Find the name of the device to listen on */
-	if (!deviceName) {
-	    deviceName = findDevice();
-	}
+    /* Find the name of the device to listen on */
+    if (!deviceName) {
+        deviceName = findDevice();
+    }
 
         sniffPackets(deviceName);
     }
