@@ -287,7 +287,7 @@ void sniffPackets(char *devName)
          exit(1);
      }
      
-     handle = pcap_open_live(devName, BUFSIZ, 1, 0, errbuf);
+     handle = pcap_open_live(devName, BUFSIZ, 0, 0, errbuf);
      if (!handle) {
          fprintf(stderr, "pcap_open_live: %s\n", errbuf);
          exit(1);
