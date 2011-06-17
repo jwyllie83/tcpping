@@ -56,6 +56,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define tcp_flag_isset(tcpptr, flag) (((tcpptr->th_flags) & (flag)) == (flag))
 
+unsigned char forced_src_ip[4];
 int timeout = 2;
 int ttl = 64;
 char *myname;
@@ -76,9 +77,6 @@ int total_syns = 0;
 int total_synacks = 0;
 int total_rsts = 0;
 int successful_pings = 0;
-
-unsigned char forcedSrcIP[4] = {0};
-
 
 /* Global handle to libnet -- libnet1 requires only one instantiation per process */
 libnet_t *l;
@@ -231,14 +229,14 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
             exit(1);
         }
 
-    /* If we've seen this particular packet, back out of the room slowly
-     * and close the door */
-    if ((ip->ip_p == IPPROTO_TCP) && get_seenflag(ntohl(tcp->th_ack))) {
-        if (verbose) {
-            printf("Ignored packet; already seen one with seq=%d\n", tcpseq_to_orderseq(ntohl(tcp->th_ack)));
-            return;
+        /* If we've seen this particular packet, back out of the room slowly
+         * and close the door */
+        if ((ip->ip_p == IPPROTO_TCP) && get_seenflag(ntohl(tcp->th_ack))) {
+            if (verbose) {
+                printf("Ignored packet; already seen one with seq=%d\n", tcpseq_to_orderseq(ntohl(tcp->th_ack)));
+                return;
+            }
         }
-    }
 
         ms = (tv_synack.tv_sec - tv_syn.tv_sec) * 1000;
         ms += (tv_synack.tv_usec - tv_syn.tv_usec)*1.0/1000;
@@ -273,13 +271,12 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
         avg_ping = ((avg_ping * successful_pings) + ms)/(successful_pings+1);
         successful_pings++;
 
-    /* Mark that we saw this packet */
-    set_seenflag(ntohl(tcp->th_ack), 1);
+        /* Mark that we saw this packet */
+        set_seenflag(ntohl(tcp->th_ack), 1);
 
         /* tell parent to continue */
         write(notify_fd, "foo", 3);
-    } else if (ip->ip_dst.s_addr == libnet_get_ipaddr4(l) &&
-               ip->ip_p == IPPROTO_ICMP && icmp->icmp_type == ICMP_TIMXCEED) {
+    } else if (ip->ip_p == IPPROTO_ICMP && icmp->icmp_type == ICMP_TIMXCEED) {
         /* Examine this packet to see if it's a time exceeded from one of our
          * probes. */
         struct ip *retip;
@@ -404,6 +401,7 @@ char *findDevice()
 void injectSYNPacket(int sequence)
 {
     int c;
+    u_int32_t src_ip;
 
     /* custom TCP header */
     /* we use the sequence to number the packets */
@@ -426,28 +424,30 @@ void injectSYNPacket(int sequence)
         exit(1);
     }
 
-    /* custom IP header; I couldn't get autobuild_ipv4 to work */
-    u_int32_t srcipaddress;
-    if (forcedSrcIP[0] > 0) {   // if the user want's a custom src address, let's use it
-        srcipaddress = ((forcedSrcIP[3] << 24) | (forcedSrcIP[2] << 16) | (forcedSrcIP[1] << 8) | forcedSrcIP[0]);
-      } else {
-        srcipaddress = libnet_get_ipaddr4(l);
+    /* Either use the user-provided IP or just determine one */
+    fprintf(stderr, "%c.%c.%c.%c", forced_src_ip[0], forced_src_ip[1], forced_src_ip[2], forced_src_ip[3]);
+
+    if (forced_src_ip[0] != 0) {   
+        src_ip = ((forced_src_ip[3] << 24) | (forced_src_ip[2] << 16) | (forced_src_ip[1] << 8) | forced_src_ip[0]);
+    } else {
+        src_ip = libnet_get_ipaddr4(l);
     }
 
+    /* custom IP header; I couldn't get autobuild_ipv4 to work */
     ip_pkt = libnet_build_ipv4(
-         LIBNET_IPV4_H + LIBNET_TCP_H,        /* packet length */
-         0,                                   /* tos */
-     htons((l->ptag_state) & 0x0000ffff), /* IP id */
-     0,                                   /* fragmentation */
-     ttl,                                 /* TTL */
-     IPPROTO_TCP,                         /* encap protocol */
-     0,                                   /* checksum */
-     srcipaddress,                        /* source IP */
-     dest_ip,                             /* destination IP */
-         NULL,                                /* payload */
-     0,                                   /* payload size */
-     l,                                   /* libnet pointer */
-     ip_pkt);                             /* libnet packet ref */
+        LIBNET_IPV4_H + LIBNET_TCP_H,        /* packet length */
+        0,                                   /* tos */
+        htons((l->ptag_state) & 0x0000ffff), /* IP id */
+        0,                                   /* fragmentation */
+        ttl,                                 /* TTL */
+        IPPROTO_TCP,                         /* encap protocol */
+        0,                                   /* checksum */
+        src_ip,                              /* source IP */
+        dest_ip,                             /* destination IP */
+        NULL,                                /* payload */
+        0,                                   /* payload size */
+        l,                                   /* libnet pointer */
+        ip_pkt);                             /* libnet packet ref */
     if (ip_pkt == -1) {
         fprintf(stderr, "libnet_autobuild_ipv4: %s\n", libnet_geterror(l));
         exit(1);
@@ -509,11 +509,10 @@ int main(int argc, char *argv[])
                 ttl = atoi(optarg);
                 break;
             case 'S':
-                forcedSrcIP[0] = atoi(strtok(optarg, "."));
-                //forcedSrcIP[0] = atoi(strtok(NULL, "."));
-                forcedSrcIP[1] = atoi(strtok(NULL, "."));
-                forcedSrcIP[2] = atoi(strtok(NULL, "."));
-                forcedSrcIP[3] = atoi(strtok(NULL, "."));
+                forced_src_ip[0] = atoi(strtok(optarg, "."));
+                forced_src_ip[1] = atoi(strtok(NULL, "."));
+                forced_src_ip[2] = atoi(strtok(NULL, "."));
+                forced_src_ip[3] = atoi(strtok(NULL, "."));
                 break;
             default:
                 usage();
