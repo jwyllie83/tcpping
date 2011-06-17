@@ -2,6 +2,7 @@
 Copyright (c) 2004, Steven Kehlet
 Copyright (c) 2010, 2011, Jim Wyllie
 Copyright (c) 2011, Ethan Blanton
+Copyright (c) 2011, Mateusz Viste
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -75,6 +76,9 @@ int total_syns = 0;
 int total_synacks = 0;
 int total_rsts = 0;
 int successful_pings = 0;
+
+unsigned char forcedSrcIP[4] = {0};
+
 
 /* Global handle to libnet -- libnet1 requires only one instantiation per process */
 libnet_t *l;
@@ -423,6 +427,13 @@ void injectSYNPacket(int sequence)
     }
 
     /* custom IP header; I couldn't get autobuild_ipv4 to work */
+    u_int32_t srcipaddress;
+    if (forcedSrcIP[0] > 0) {   // if the user want's a custom src address, let's use it
+        srcipaddress = ((forcedSrcIP[3] << 24) | (forcedSrcIP[2] << 16) | (forcedSrcIP[1] << 8) | forcedSrcIP[0]);
+      } else {
+        srcipaddress = libnet_get_ipaddr4(l);
+    }
+
     ip_pkt = libnet_build_ipv4(
          LIBNET_IPV4_H + LIBNET_TCP_H,        /* packet length */
          0,                                   /* tos */
@@ -431,7 +442,7 @@ void injectSYNPacket(int sequence)
      ttl,                                 /* TTL */
      IPPROTO_TCP,                         /* encap protocol */
      0,                                   /* checksum */
-     libnet_get_ipaddr4(l),               /* source IP */
+     srcipaddress,                        /* source IP */
      dest_ip,                             /* destination IP */
          NULL,                                /* payload */
      0,                                   /* payload size */
@@ -455,7 +466,7 @@ void injectSYNPacket(int sequence)
 
 void usage()
 {
-    fprintf(stderr, "%s: [-v] [-c count] [-p port] [-i interval] [-I interface] [-W timeout] [-t ttl] remote_host\n", myname);
+    fprintf(stderr, "%s: [-v] [-c count] [-p port] [-i interval] [-I interface] [-W timeout] [-t ttl] [-S srcaddress] remote_host\n", myname);
     exit(0);
 }
 
@@ -474,7 +485,7 @@ int main(int argc, char *argv[])
 
     myname = argv[0];
 
-    while ((c = getopt(argc, argv, "c:p:i:vI:W:t:")) != -1) {
+    while ((c = getopt(argc, argv, "c:p:i:vI:W:t:S:")) != -1) {
         switch (c) {
             case 'c':
                 count = atoi(optarg);
@@ -496,6 +507,13 @@ int main(int argc, char *argv[])
                 break;
             case 't':
                 ttl = atoi(optarg);
+                break;
+            case 'S':
+                forcedSrcIP[0] = atoi(strtok(optarg, "."));
+                //forcedSrcIP[0] = atoi(strtok(NULL, "."));
+                forcedSrcIP[1] = atoi(strtok(NULL, "."));
+                forcedSrcIP[2] = atoi(strtok(NULL, "."));
+                forcedSrcIP[3] = atoi(strtok(NULL, "."));
                 break;
             default:
                 usage();
