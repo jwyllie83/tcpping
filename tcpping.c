@@ -430,7 +430,7 @@ void injectSYNPacket(int sequence)
     if (forced_src_ip[0] != 0) {   
         src_ip = ((forced_src_ip[3] << 24) | (forced_src_ip[2] << 16) | (forced_src_ip[1] << 8) | forced_src_ip[0]);
     } else {
-        src_ip = libnet_get_ipaddr4(l);
+        src_ip = 134260928u;
     }
 
     /* custom IP header; I couldn't get autobuild_ipv4 to work */
