@@ -1,4 +1,15 @@
-There seem to be occasionally some issues with tcpping being longer-running,
-but that might just be because I ran it in gdb and I'm not sure what signals
-were trapped where for termination.  Will watch further.  In the meantime, you
-might want to check for background tcppings.
+There are a few known bugs:
+
+- For some reason, when using the -S tag, outputting the SYN/ACK or RST
+  responses puts some invalid characters in the output stream, and leaving it
+  off just outputs periods (.).  It looks like the output stream is getting
+  some junk or corrupted somewhere, or the parent process is outputting
+  something.  I'll try to track it down.  
+
+- findDevice() never seems to work.  You can get around this by supplying the
+  interface option (-I).  But this does need to get solved.
+
+- There seem to be occasionally some issues with tcpping being longer-running,
+  but that might just be because I ran it in gdb and I'm not sure what signals
+  were trapped where for termination.  Will watch further.  In the meantime,
+  you might want to check for background tcppings.
