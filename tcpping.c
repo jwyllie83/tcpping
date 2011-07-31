@@ -150,7 +150,7 @@ char *inet_ntoa2(in_addr_t addr)
 	return inet_ntoa(iaddr);
 }
 
-void showPacket(struct ip *ip, struct tcphdr *tcp)
+void show_packet(struct ip *ip, struct tcphdr *tcp)
 {
 	int r;
 	struct timeval tv;
@@ -214,7 +214,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 	payload = (u_char *)(packet + size_ethernet + size_ip + size_tcp);
 
 	if (verbose) {
-		showPacket(ip, ip->ip_p == IPPROTO_TCP ? tcp : NULL);
+		show_packet(ip, ip->ip_p == IPPROTO_TCP ? tcp : NULL);
 	}
 
 	/* In English:  "SYN packet that we sent out" */
@@ -345,23 +345,23 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 	}
 }
 
-void sniffPackets(char *devName)
+void sniff_packets(char *device_name)
 {
 	 int r;
 	 pcap_t *handle;
 	 char errbuf[PCAP_ERRBUF_SIZE];
-	 char filterExpr[1024];
+	 char filter_expression[1024];
 	 struct bpf_program filter;
 	 bpf_u_int32 mask;
 	 bpf_u_int32 net;
 
-	 r = pcap_lookupnet(devName, &net, &mask, errbuf);
+	 r = pcap_lookupnet(device_name, &net, &mask, errbuf);
 	 if (r < 0) {
 		 fprintf(stderr, "pcap_lookupnet: %s\n", errbuf);
 		 exit(1);
 	 }
 	 
-	 handle = pcap_open_live(devName, BUFSIZ, 0, 0, errbuf);
+	 handle = pcap_open_live(device_name, BUFSIZ, 0, 0, errbuf);
 	 if (!handle) {
 		 fprintf(stderr, "pcap_open_live: %s\n", errbuf);
 		 exit(1);
@@ -379,13 +379,13 @@ void sniffPackets(char *devName)
 		exit(1);
 	}
 
-	 /* compile and apply the filterExpr */
-	snprintf(filterExpr, sizeof(filterExpr), 
+	 /* compile and apply the filter_expression */
+	snprintf(filter_expression, sizeof(filter_expression), 
 		"(host %s and port %u) or icmp[icmptype] == icmp-timxceed",
 		inet_ntoa2(dest_ip), dest_port
 	);
 
-	r = pcap_compile(handle, &filter, filterExpr, 0, mask);
+	r = pcap_compile(handle, &filter, filter_expression, 0, mask);
 	if (r < 0) {
 		fprintf(stderr, "pcap_compile: %s\n", pcap_geterr(handle));
 		exit(1);
@@ -410,7 +410,7 @@ void sniffPackets(char *devName)
  * dest_ip 
  * WARNING:  This function will wreck your libnet stack! we
  * therefore only call it in the child process */
-char *findDevice()
+char *find_device()
 {
 	libnet_ptag_t t;
 	char *device_name;
@@ -422,7 +422,7 @@ char *findDevice()
 		0,                                 /* fragment offset */
 		256,                               /* TTL */
 		6,                                 /* Encapsulated TCP */
-		0,                                 /* Have LibNet fill in the checksum */
+		0,                                 /* Have libnet fill in the checksum */
 		src_ip,                            /* Source IP */
 		dest_ip,                           /* Destination IP */
 		0,                                 /* Payload */
@@ -441,7 +441,7 @@ char *findDevice()
 	return device_name;
 }
 
-void injectSYNPacket(int sequence)
+void inject_syn_packet(int sequence)
 {
 	int c;
 
@@ -640,7 +640,7 @@ int main(int argc, char *argv[])
 		siginterrupt(SIGALRM, 1);
 
 		for (;;) {
-			injectSYNPacket(sequence++);
+			inject_syn_packet(sequence++);
 
 			/* wait for child to receive response */
 			timed_out = 0;
@@ -697,10 +697,10 @@ int main(int argc, char *argv[])
 		 * coming from.
 		 */
 		if (!device_name) {
-			device_name = findDevice();
+			device_name = find_device();
 		}
 
-		sniffPackets(device_name);
+		sniff_packets(device_name);
 	}
 
 	return(0);
