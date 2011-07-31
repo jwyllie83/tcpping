@@ -1,10 +1,2 @@
-There are a few known bugs:
-
-- There seem to be occasionally some issues with tcpping being longer-running,
-  but that might just be because I ran it in gdb and I'm not sure what signals
-  were trapped where for termination.  Will watch further.  In the meantime,
-  you might want to check for background tcppings.
-
-- Make sure that when a packet is "Timed out" that it will not count as an
-  eligible received packet later.  This is easiest done by the same method that
-  stops duplications.
+There are no known bugs at this time.  Check this file's history to see what
+past historical bugs were fixed.

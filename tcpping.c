@@ -31,6 +31,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -53,12 +54,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <sys/wait.h>
 #include <time.h>
 #include <string.h>
+#include <errno.h>
 
 #define tcp_flag_isset(tcpptr, flag) (((tcpptr->th_flags) & (flag)) == (flag))
 
 unsigned char forced_src_ip[4];
 u_int32_t src_ip;
-int timeout = 2;
 int ttl = 64;
 char *myname;
 pid_t child_pid;
@@ -126,6 +127,27 @@ int get_seenflag(int tcpseq)
 {
 	int orderseq = tcpseq_to_orderseq(tcpseq);
 	return ((seen_response_bitflags >> (orderseq % 32)) & 1);
+}
+
+/* Sleep for a given number of milliseconds */
+int msleep(long duration)
+{
+	struct timespec wait_time;
+	struct timespec remainder;
+
+	wait_time.tv_sec = duration / 1000;
+	wait_time.tv_nsec = (long)(duration % 1000) * 1000000;
+
+	return nanosleep(&wait_time, &remainder);
+}
+
+/* Function to determine the millisecond-difference between two timestamps */
+long timestamp_difference(const struct timeval *one, const struct timeval *two)
+{
+	long difference = 0;
+	difference += ((one->tv_sec - two->tv_sec) * 1000);
+	difference += ((one->tv_usec - two->tv_usec) / 1000);
+	return difference;
 }
 
 void print_stats(int junk)
@@ -503,7 +525,7 @@ void inject_syn_packet(int sequence)
 
 void usage()
 {
-	fprintf(stderr, "%s: [-v] [-c count] [-p port] [-i interval] [-I interface] [-W timeout] [-t ttl] [-S srcaddress] remote_host\n", myname);
+	fprintf(stderr, "%s: [-v] [-c count] [-p port] [-i interval] [-I interface] [-t ttl] [-S srcaddress] remote_host\n", myname);
 	exit(0);
 }
 
@@ -513,16 +535,15 @@ int main(int argc, char *argv[])
 	int c;
 	char *device_name = NULL;
 	int count = -1;
-	int interval = 1;
+	long interval = 1000;
 	struct hostent *he;
 	int pipefds[2];
 	char junk[256];
 	int sequence = 1;
-	int timed_out = 0;
 
 	myname = argv[0];
 
-	while ((c = getopt(argc, argv, "c:p:i:vI:W:t:S:")) != -1) {
+	while ((c = getopt(argc, argv, "c:p:i:vI:t:S:")) != -1) {
 		switch (c) {
 			case 'c':
 				count = atoi(optarg);
@@ -531,16 +552,13 @@ int main(int argc, char *argv[])
 				dest_port = atoi(optarg);
 				break;
 			case 'i':
-				interval = atoi(optarg);
+				interval = (long)(atof(optarg) * 1000.0);
 				break;
 			case 'I':
 				device_name = optarg;
 				break;
 			case 'v':
 				verbose = 1;
-				break;
-			case 'W':
-				timeout = atoi(optarg);
 				break;
 			case 't':
 				ttl = atoi(optarg);
@@ -615,7 +633,7 @@ int main(int argc, char *argv[])
 	sequence_offset = random();
 
 	/* pipe is to synchronize with our child */
-	r = pipe(pipefds);
+	r = pipe2(pipefds, O_NONBLOCK);
 	if (r < 0) {
 		perror("pipe");
 		exit(1);
@@ -627,37 +645,28 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	/* The parent is to send packets until an alarm, cnt, timeout, or Ctrl+C */
+	/* The parent is to send packets until an alarm, cnt, or Ctrl+C */
 	if (child_pid) {
 		close(pipefds[1]);
 
 		/* wait for child sniffer to be ready */
-		r = read(pipefds[0], junk, sizeof(junk));
-
-		signal(SIGINT, handle_sigint);
-		signal(SIGALRM, handle_sigalrm);
-		/* stop read() from restarting upon SIGALRM */
-		siginterrupt(SIGALRM, 1);
-
 		for (;;) {
-			inject_syn_packet(sequence++);
-
-			/* wait for child to receive response */
-			timed_out = 0;
-			alarm(timeout);
 			r = read(pipefds[0], junk, sizeof(junk));
-
-			if (r == 0) {
-				/* child died */
-				fprintf(stderr, "child exited.\n");
-				exit(1);
-			} else if (r < 0) {
-				printf("Timed out.\n");
-				timed_out = 1;
+			if (r > 0) {
+				break;
 			}
 
-			alarm(0);
+			msleep(200);
+		}
 
+		signal(SIGINT, handle_sigint);
+
+		/* Event loop: either send, or whatever */
+		for (;;) {
+			inject_syn_packet(sequence++);
+			msleep(interval);
+
+			/* See if we sent too many packets */
 			if (--count == 0) {
 				/* tell child to display stats */
 				kill(child_pid, SIGINT);
@@ -666,16 +675,14 @@ int main(int argc, char *argv[])
 				break;
 			}
 
-			if (timed_out) {
-				timed_out = interval - timeout;
-				if (timed_out > 0) {
-					sleep(timed_out);
-				}
-			} else {
-				sleep(interval);
+			/* If we got here, we got a different errval than a non-block.  Fail out */
+			r = read(pipefds[0], junk, sizeof(junk));
+			if (r == -1 && (errno != EAGAIN && errno != EWOULDBLOCK)) {
+				/* child died */
+				fprintf(stderr, "child exited.\n");
+				exit(1);
 			}
 		}
-
 	}
 
 	/* The child is to receive packets until terminated by the parent */
