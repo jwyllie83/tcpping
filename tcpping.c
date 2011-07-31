@@ -57,6 +57,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define tcp_flag_isset(tcpptr, flag) (((tcpptr->th_flags) & (flag)) == (flag))
 
 unsigned char forced_src_ip[4];
+u_int32_t src_ip;
 int timeout = 2;
 int ttl = 64;
 char *myname;
@@ -383,11 +384,22 @@ char *findDevice()
     libnet_ptag_t t;
     char *deviceName;
 
-    t = libnet_autobuild_ipv4(
-        LIBNET_IPV4_H + LIBNET_TCP_H, /* length */
-        IPPROTO_TCP,                  /* protocol */
-        dest_ip,                      /* destination IP */
-        l);                           /* libnet handle */
+    t = libnet_build_ipv4(
+        LIBNET_IPV4_H + LIBNET_TCP_H,     /* length */
+        0,                                /* differentiated services */
+        0,                                /* identification number */
+        0,                                /* fragment offset */
+        256,                              /* TTL */
+        6,                                /* Encapsulated TCP */
+        0,                                /* Have LibNet fill in the checksum */
+        src_ip,                           /* Source IP */
+        dest_ip,                          /* Destination IP */
+        0,                                /* Payload */
+        0,                                /* Length of the payload */
+        l,                                /* libnet handle */
+        0
+    );
+
     if (t == -1) {
         fprintf(stderr, "libnet_autobuild_ipv4: %s\n", libnet_geterror(l));
         exit(1);
@@ -401,7 +413,6 @@ char *findDevice()
 void injectSYNPacket(int sequence)
 {
     int c;
-    u_int32_t src_ip;
 
     /* custom TCP header */
     /* we use the sequence to number the packets */
@@ -422,15 +433,6 @@ void injectSYNPacket(int sequence)
     if (tcp_pkt == -1) {
         fprintf(stderr, "libnet_build_tcp: %s\n", libnet_geterror(l));
         exit(1);
-    }
-
-    /* Either use the user-provided IP or just determine one */
-    fprintf(stderr, "%c.%c.%c.%c", forced_src_ip[0], forced_src_ip[1], forced_src_ip[2], forced_src_ip[3]);
-
-    if (forced_src_ip[0] != 0) {   
-        src_ip = ((forced_src_ip[3] << 24) | (forced_src_ip[2] << 16) | (forced_src_ip[1] << 8) | forced_src_ip[0]);
-    } else {
-        src_ip = 134260928u;
     }
 
     /* custom IP header; I couldn't get autobuild_ipv4 to work */
@@ -555,6 +557,17 @@ int main(int argc, char *argv[])
         exit(1); 
     }
 
+    if (forced_src_ip[0] != 0) {   
+        src_ip = ((forced_src_ip[3] << 24) | (forced_src_ip[2] << 16) | (forced_src_ip[1] << 8) | forced_src_ip[0]);
+    } else {
+        src_ip = libnet_get_ipaddr4(l);
+    }
+
+    if (src_ip == -1u) {
+        fprintf(stderr, "Unable to calculate source_ip.  Do you have an UP interface with no IP assigned?\n");
+        exit(1);
+    }
+
     dest_name = he->h_name;
     printf("TCP PING %s (%s:%u)\n", dest_name, 
            inet_ntoa2(dest_ip), dest_port);
@@ -625,15 +638,16 @@ int main(int argc, char *argv[])
 
     } else {
         /* child */
+        sleep(10);
         close(pipefds[0]);
         notify_fd = pipefds[1];
 
         signal(SIGINT, print_stats);
 
-    /* Find the name of the device to listen on */
-    if (!deviceName) {
-        deviceName = findDevice();
-    }
+        /* Find the name of the device to listen on */
+        if (!deviceName) {
+            deviceName = findDevice();
+        }
 
         sniffPackets(deviceName);
     }
