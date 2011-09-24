@@ -1,2 +1,10 @@
-There are no known bugs at this time.  Check this file's history to see what
-past historical bugs were fixed.
+If the sending interval is near or less than the RTT of the connection then you
+will get artifically deflated ping times.
+
+For example, if your destination is 300ms away and your sending interval is
+100ms, you'll get <100ms times reported as it simply accepts the "last received
+packet" instead of the packet that was really sent.
+
+Thanks to rveloso@github for reporting this.  More information at:
+
+https://github.com/jwyllie83/tcpping/issues/1
