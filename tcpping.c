@@ -31,7 +31,6 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -49,6 +48,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <netinet/ip_icmp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <libnet.h>
 #include <sys/wait.h>
@@ -633,9 +633,15 @@ int main(int argc, char *argv[])
 	sequence_offset = random();
 
 	/* pipe is to synchronize with our child */
-	r = pipe2(pipefds, O_NONBLOCK);
+	r = pipe(pipefds);
 	if (r < 0) {
 		perror("pipe");
+		exit(1);
+	}
+
+	r = fcntl(pipefds[0], F_SETFL, O_NONBLOCK);
+	if (r < 0) {
+		perror("fcntl (nonblock)");
 		exit(1);
 	}
 
