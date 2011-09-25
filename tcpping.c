@@ -119,20 +119,29 @@ void handle_sigint(int junk)
 
 /* Some functions relating to keeping track of sequence state */
 
-unsigned int tcpseq_to_orderseq(int tcpseq)
+unsigned int tcpseq_to_orderseq(unsigned int tcpseq)
 {
 	return (unsigned int)((tcpseq - sequence_offset) / 100);
 }
 
-void set_seenflag(int tcpseq, int flag)
+void set_seenflag(unsigned int tcpseq, int flag)
 {
-	int orderseq = tcpseq_to_orderseq(tcpseq);
-	seen_response_bitflags = seen_response_bitflags | ((flag > 0 ? 1 : 0) << orderseq % 32);
+	unsigned int orderseq = tcpseq_to_orderseq(tcpseq);
+	unsigned int bitmask;
+	unsigned int shift = orderseq % 32;
+
+	if (flag > 0) {
+		seen_response_bitflags = seen_response_bitflags | (1 << shift);
+	} else {
+		if (get_seenflag(tcpseq) == 1) {
+			seen_response_bitflags = seen_response_bitflags ^ (1 << shift);
+		}
+	}
 }
 
-int get_seenflag(int tcpseq)
+int get_seenflag(unsigned int tcpseq)
 {
-	int orderseq = tcpseq_to_orderseq(tcpseq);
+	unsigned int orderseq = tcpseq_to_orderseq(tcpseq);
 	return ((seen_response_bitflags >> (orderseq % 32)) & 1);
 }
 
@@ -222,7 +231,7 @@ void show_packet(struct ip *ip, struct tcphdr *tcp)
 /* callback to pcap_loop() */
 void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
 {
-	int r;
+	int r, i;
 	int seqno, packetno;
 	struct ether_header *ethernet;
 	struct ip *ip;
@@ -247,6 +256,11 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 
 	if (verbose) {
 		show_packet(ip, ip->ip_p == IPPROTO_TCP ? tcp : NULL);
+		printf("\tSeen flags: ");
+		for (i = 0; i < 32; ++i) {
+			printf("%d", (seen_response_bitflags >> i) & 1);
+		}
+		printf("\n");
 	}
 
 	/* In English:  "SYN packet that we sent out" */
@@ -281,18 +295,28 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 			exit(1);
 		}
 
+		/* Clear some of the rolling buffer.  This isn't perfect, but
+ 		 * it's not bad. */
+		set_seenflag(ntohl(tcp->th_ack) + 1800, 0);
+		set_seenflag(ntohl(tcp->th_ack) + 1700, 0);
+		set_seenflag(ntohl(tcp->th_ack) + 1600, 0);
+		set_seenflag(ntohl(tcp->th_ack) + 1500, 0);
+
 		/* If we've seen this particular packet, back out of the room slowly
 		 * and close the door */
 		if ((ip->ip_p == IPPROTO_TCP) && get_seenflag(ntohl(tcp->th_ack))) {
 			if (verbose) {
 				printf("Ignored packet; already seen one with seq=%d\n", 
-					tcpseq_to_orderseq(ntohl(tcp->th_ack)));
+					tcpseq_to_orderseq(ntohl(tcp->th_ack) - 1));
 				return;
 			}
 		}
 
+		/* Mark that we saw this packet */
+		set_seenflag(ntohl(tcp->th_ack), 1);
+
 		/* Figure out when this particular packet was sent */
-		seqno = tcpseq_to_orderseq(ntohl(tcp->th_ack));
+		seqno = tcpseq_to_orderseq(ntohl(tcp->th_ack) - 1);
 		tv_syn = &(sent_times[seqno % PACKET_HISTORY]);
 		ms = (tv_synack.tv_sec - tv_syn->tv_sec) * 1000;
 		ms += (tv_synack.tv_usec - tv_syn->tv_usec)*1.0/1000;
@@ -317,7 +341,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 		printf("%s from %s: seq=%u ttl=%d time=%.3f%s\n", 
 			flags,
 			inet_ntoa(ip->ip_src), 
-			tcpseq_to_orderseq(ntohl(tcp->th_ack)),
+			tcpseq_to_orderseq(ntohl(tcp->th_ack) - 1),
 			ip->ip_ttl,
 			ms, units
 		);
@@ -332,9 +356,6 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 		
 		avg_ping = ((avg_ping * successful_pings) + ms)/(successful_pings+1);
 		successful_pings++;
-
-		/* Mark that we saw this packet */
-		set_seenflag(ntohl(tcp->th_ack), 1);
 
 		/* tell parent to continue */
 		write(notify_fd, "foo", 3);
@@ -360,7 +381,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 				exit(1);
 			}
 			/* Figure out when this particular packet was sent */
-			seqno = tcpseq_to_orderseq(ntohl(tcp->th_ack));
+			seqno = tcpseq_to_orderseq(ntohl(tcp->th_ack) - 1);
 			tv_syn = &(sent_times[seqno % PACKET_HISTORY]);
 			ms = (tv_synack.tv_sec - tv_syn->tv_sec) * 1000;
 			ms += (tv_synack.tv_usec - tv_syn->tv_usec)*1.0/1000;
@@ -546,9 +567,6 @@ void inject_syn_packet(int sequence)
 		fprintf(stderr, "libnet_write: %s\n", libnet_geterror(l));
 		exit(1);
 	}
-
-	/* Mark that we're waiting for this packet */
-	set_seenflag(sequence_offset + (sequence*100), 0);
 }
 
 void usage()
