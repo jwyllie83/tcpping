@@ -308,8 +308,9 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 			if (verbose) {
 				printf("Ignored packet; already seen one with seq=%d\n", 
 					tcpseq_to_orderseq(ntohl(tcp->th_ack) - 1));
-				return;
 			}
+
+			return;
 		}
 
 		/* Mark that we saw this packet */
