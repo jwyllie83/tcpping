@@ -14,7 +14,7 @@ met:
    notice, this list of conditions and the following disclaimer in the
    documentation and/or other materials provided with the
    distribution.
-3. The names of Steven Kehlet or Jim Wylliemay not be used to endorse
+3. The names of all tcpping copyright holders may not be used to endorse
    or promote products derived from this software without specific prior
    written permission.
 
@@ -66,7 +66,7 @@ pid_t child_pid;
 int keep_going = 1;
 int verbose = 0;
 int notify_fd;
-struct timeval tv_syn, tv_synack, tv_timxceed;
+struct timeval tv_timxceed;
 int sequence_offset = 0;
 char *dest_name;
 in_addr_t dest_ip = 0;
@@ -96,6 +96,13 @@ libnet_ptag_t ip_pkt;
  */
 int32_t seen_response_bitflags = 0;
 
+/* Keep track of a recent history of packet send times to accurately calculate
+ * when packets were received
+ */
+
+#define PACKET_HISTORY 1024
+struct timeval sent_times[PACKET_HISTORY];
+
 void handle_sigalrm(int junk)
 {
 	/* do nothing */
@@ -112,20 +119,29 @@ void handle_sigint(int junk)
 
 /* Some functions relating to keeping track of sequence state */
 
-int tcpseq_to_orderseq(int tcpseq)
+unsigned int tcpseq_to_orderseq(unsigned int tcpseq)
 {
-	return (int)((tcpseq - sequence_offset) / 100);
+	return (unsigned int)((tcpseq - sequence_offset) / 100);
 }
 
-void set_seenflag(int tcpseq, int flag)
+void set_seenflag(unsigned int tcpseq, int flag)
 {
-	int orderseq = tcpseq_to_orderseq(tcpseq);
-	seen_response_bitflags = seen_response_bitflags | ((flag > 0 ? 1 : 0) << orderseq % 32);
+	unsigned int orderseq = tcpseq_to_orderseq(tcpseq);
+	unsigned int bitmask;
+	unsigned int shift = orderseq % 32;
+
+	if (flag > 0) {
+		seen_response_bitflags = seen_response_bitflags | (1 << shift);
+	} else {
+		if (get_seenflag(tcpseq) == 1) {
+			seen_response_bitflags = seen_response_bitflags ^ (1 << shift);
+		}
+	}
 }
 
-int get_seenflag(int tcpseq)
+int get_seenflag(unsigned int tcpseq)
 {
-	int orderseq = tcpseq_to_orderseq(tcpseq);
+	unsigned int orderseq = tcpseq_to_orderseq(tcpseq);
 	return ((seen_response_bitflags >> (orderseq % 32)) & 1);
 }
 
@@ -215,7 +231,8 @@ void show_packet(struct ip *ip, struct tcphdr *tcp)
 /* callback to pcap_loop() */
 void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
 {
-	int r;
+	int r, i;
+	int seqno, packetno;
 	struct ether_header *ethernet;
 	struct ip *ip;
 	struct tcphdr *tcp;
@@ -224,6 +241,8 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 	float ms;
 	char *units = "ms";
 	char *flags;
+	struct timeval tv_synack;
+	struct timeval *tv_syn;
 
 	int size_ethernet = sizeof(struct ether_header);
 	int size_ip = sizeof(struct ip);
@@ -237,22 +256,29 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 
 	if (verbose) {
 		show_packet(ip, ip->ip_p == IPPROTO_TCP ? tcp : NULL);
+		printf("\tSeen flags: ");
+		for (i = 0; i < 32; ++i) {
+			printf("%d", (seen_response_bitflags >> i) & 1);
+		}
+		printf("\n");
 	}
 
 	/* In English:  "SYN packet that we sent out" */
 	if (ip->ip_dst.s_addr == dest_ip && ip->ip_p == IPPROTO_TCP &&
 		tcp_flag_isset(tcp, TH_SYN)) {
 
-		r = gettimeofday(&tv_syn, NULL);
+		/* Store the send time of the packet */
 
+		seqno = ntohl(tcp->th_seq);
+		packetno = tcpseq_to_orderseq(ntohl(tcp->th_seq));
+		r = memcpy(&(sent_times[packetno % PACKET_HISTORY]), &(header->ts), sizeof(struct timeval));
 		if (r < 0)
 		{
-			perror("gettimeofday");
+			perror("memcpy");
 			exit(1);
 		}
 
 		total_syns++;
-
 	}
 
 	/* In English:  "Response packet we're interested in, from the other host" */
@@ -269,18 +295,31 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 			exit(1);
 		}
 
+		/* Clear some of the rolling buffer.  This isn't perfect, but
+ 		 * it's not bad. */
+		set_seenflag(ntohl(tcp->th_ack) + 1800, 0);
+		set_seenflag(ntohl(tcp->th_ack) + 1700, 0);
+		set_seenflag(ntohl(tcp->th_ack) + 1600, 0);
+		set_seenflag(ntohl(tcp->th_ack) + 1500, 0);
+
 		/* If we've seen this particular packet, back out of the room slowly
 		 * and close the door */
 		if ((ip->ip_p == IPPROTO_TCP) && get_seenflag(ntohl(tcp->th_ack))) {
 			if (verbose) {
 				printf("Ignored packet; already seen one with seq=%d\n", 
-					tcpseq_to_orderseq(ntohl(tcp->th_ack)));
+					tcpseq_to_orderseq(ntohl(tcp->th_ack) - 1));
 				return;
 			}
 		}
 
-		ms = (tv_synack.tv_sec - tv_syn.tv_sec) * 1000;
-		ms += (tv_synack.tv_usec - tv_syn.tv_usec)*1.0/1000;
+		/* Mark that we saw this packet */
+		set_seenflag(ntohl(tcp->th_ack), 1);
+
+		/* Figure out when this particular packet was sent */
+		seqno = tcpseq_to_orderseq(ntohl(tcp->th_ack) - 1);
+		tv_syn = &(sent_times[seqno % PACKET_HISTORY]);
+		ms = (tv_synack.tv_sec - tv_syn->tv_sec) * 1000;
+		ms += (tv_synack.tv_usec - tv_syn->tv_usec)*1.0/1000;
 
 		/* Do some analysis on the returned packet... */
 		if (ms > 1000) {
@@ -302,7 +341,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 		printf("%s from %s: seq=%u ttl=%d time=%.3f%s\n", 
 			flags,
 			inet_ntoa(ip->ip_src), 
-			tcpseq_to_orderseq(ntohl(tcp->th_ack)),
+			tcpseq_to_orderseq(ntohl(tcp->th_ack) - 1),
 			ip->ip_ttl,
 			ms, units
 		);
@@ -317,9 +356,6 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 		
 		avg_ping = ((avg_ping * successful_pings) + ms)/(successful_pings+1);
 		successful_pings++;
-
-		/* Mark that we saw this packet */
-		set_seenflag(ntohl(tcp->th_ack), 1);
 
 		/* tell parent to continue */
 		write(notify_fd, "foo", 3);
@@ -344,9 +380,11 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 				perror("gettimeofday");
 				exit(1);
 			}
-
-			ms = (tv_timxceed.tv_sec - tv_syn.tv_sec) * 1000;
-			ms += (tv_timxceed.tv_usec - tv_syn.tv_usec)*1.0/1000;
+			/* Figure out when this particular packet was sent */
+			seqno = tcpseq_to_orderseq(ntohl(tcp->th_ack) - 1);
+			tv_syn = &(sent_times[seqno % PACKET_HISTORY]);
+			ms = (tv_synack.tv_sec - tv_syn->tv_sec) * 1000;
+			ms += (tv_synack.tv_usec - tv_syn->tv_usec)*1.0/1000;
 
 			if (ms > 1000) {
 				units = "s";
@@ -466,9 +504,20 @@ char *find_device()
 void inject_syn_packet(int sequence)
 {
 	int c;
+	int r;
 
-	/* custom TCP header */
-	/* we use the sequence to number the packets */
+	/* Build the custom TCP header.  We have a weird hack here:
+	 * We use the sequence number to define the packet order
+	 */
+
+	struct timeval tv;
+	r = gettimeofday(&tv, NULL);
+	if (r < 0)
+	{
+		perror("gettimeofday");
+		exit(1);
+	}
+
 	tcp_pkt = libnet_build_tcp(
 		random() % 65536,                                 /* source port */
 		dest_port,                                        /* destination port */
@@ -518,9 +567,6 @@ void inject_syn_packet(int sequence)
 		fprintf(stderr, "libnet_write: %s\n", libnet_geterror(l));
 		exit(1);
 	}
-
-	/* Mark that we're waiting for this packet */
-	set_seenflag(sequence_offset + (sequence*100), 0);
 }
 
 void usage()

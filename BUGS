@@ -1,2 +1,11 @@
-There are no known bugs at this time.  Check this file's history to see what
-past historical bugs were fixed.
+Picked up some instances of duplicated sequence numbers when we were getting duplicated responses.
+
+jim@eiko tcpping $ sudo ./tcpping x -I wlan0 -i 1.0
+TCP PING x (x:80)
+SYN/ACK from x: seq=1 ttl=51 time=465.634ms
+SYN/ACK from x: seq=2 ttl=51 time=489.545ms
+SYN/ACK from x: seq=2 ttl=51 time=490.450ms
+SYN/ACK from x: seq=3 ttl=51 time=308.855ms
+
+We are getting duplicated SYN/ACK packets; it looks like the fix we put in
+place to detect that isn't working quite right.
