@@ -66,7 +66,7 @@ pid_t child_pid;
 int keep_going = 1;
 int verbose = 0;
 int notify_fd;
-struct timeval tv_syn, tv_synack, tv_timxceed;
+struct timeval tv_timxceed;
 int sequence_offset = 0;
 char *dest_name;
 in_addr_t dest_ip = 0;
@@ -96,6 +96,13 @@ libnet_ptag_t ip_pkt;
  */
 int32_t seen_response_bitflags = 0;
 
+/* Keep track of a recent history of packet send times to accurately calculate
+ * when packets were received
+ */
+
+#define PACKET_HISTORY 1024
+struct timeval sent_times[PACKET_HISTORY];
+
 void handle_sigalrm(int junk)
 {
 	/* do nothing */
@@ -112,9 +119,9 @@ void handle_sigint(int junk)
 
 /* Some functions relating to keeping track of sequence state */
 
-int tcpseq_to_orderseq(int tcpseq)
+unsigned int tcpseq_to_orderseq(int tcpseq)
 {
-	return (int)((tcpseq - sequence_offset) / 100);
+	return (unsigned int)((tcpseq - sequence_offset) / 100);
 }
 
 void set_seenflag(int tcpseq, int flag)
@@ -216,6 +223,7 @@ void show_packet(struct ip *ip, struct tcphdr *tcp)
 void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
 {
 	int r;
+	int seqno, packetno;
 	struct ether_header *ethernet;
 	struct ip *ip;
 	struct tcphdr *tcp;
@@ -224,6 +232,8 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 	float ms;
 	char *units = "ms";
 	char *flags;
+	struct timeval tv_synack;
+	struct timeval *tv_syn;
 
 	int size_ethernet = sizeof(struct ether_header);
 	int size_ip = sizeof(struct ip);
@@ -243,16 +253,18 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 	if (ip->ip_dst.s_addr == dest_ip && ip->ip_p == IPPROTO_TCP &&
 		tcp_flag_isset(tcp, TH_SYN)) {
 
-		r = gettimeofday(&tv_syn, NULL);
+		/* Store the send time of the packet */
 
+		seqno = ntohl(tcp->th_seq);
+		packetno = tcpseq_to_orderseq(ntohl(tcp->th_seq));
+		r = memcpy(&(sent_times[packetno % PACKET_HISTORY]), &(header->ts), sizeof(struct timeval));
 		if (r < 0)
 		{
-			perror("gettimeofday");
+			perror("memcpy");
 			exit(1);
 		}
 
 		total_syns++;
-
 	}
 
 	/* In English:  "Response packet we're interested in, from the other host" */
@@ -279,8 +291,11 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 			}
 		}
 
-		ms = (tv_synack.tv_sec - tv_syn.tv_sec) * 1000;
-		ms += (tv_synack.tv_usec - tv_syn.tv_usec)*1.0/1000;
+		/* Figure out when this particular packet was sent */
+		seqno = tcpseq_to_orderseq(ntohl(tcp->th_ack));
+		tv_syn = &(sent_times[seqno % PACKET_HISTORY]);
+		ms = (tv_synack.tv_sec - tv_syn->tv_sec) * 1000;
+		ms += (tv_synack.tv_usec - tv_syn->tv_usec)*1.0/1000;
 
 		/* Do some analysis on the returned packet... */
 		if (ms > 1000) {
@@ -344,9 +359,11 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 				perror("gettimeofday");
 				exit(1);
 			}
-
-			ms = (tv_timxceed.tv_sec - tv_syn.tv_sec) * 1000;
-			ms += (tv_timxceed.tv_usec - tv_syn.tv_usec)*1.0/1000;
+			/* Figure out when this particular packet was sent */
+			seqno = tcpseq_to_orderseq(ntohl(tcp->th_ack));
+			tv_syn = &(sent_times[seqno % PACKET_HISTORY]);
+			ms = (tv_synack.tv_sec - tv_syn->tv_sec) * 1000;
+			ms += (tv_synack.tv_usec - tv_syn->tv_usec)*1.0/1000;
 
 			if (ms > 1000) {
 				units = "s";
@@ -466,9 +483,20 @@ char *find_device()
 void inject_syn_packet(int sequence)
 {
 	int c;
+	int r;
 
-	/* custom TCP header */
-	/* we use the sequence to number the packets */
+	/* Build the custom TCP header.  We have a weird hack here:
+	 * We use the sequence number to define the packet order
+	 */
+
+	struct timeval tv;
+	r = gettimeofday(&tv, NULL);
+	if (r < 0)
+	{
+		perror("gettimeofday");
+		exit(1);
+	}
+
 	tcp_pkt = libnet_build_tcp(
 		random() % 65536,                                 /* source port */
 		dest_port,                                        /* destination port */
