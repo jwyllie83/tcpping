@@ -164,6 +164,47 @@ long timestamp_difference(const struct timeval *one, const struct timeval *two)
 	return difference;
 }
 
+/* Function to validate that the given device is a valid one according to pcap;
+ * used for setuid safety to validate the device name.  device_name is
+ * untrusted here.
+ */
+int check_device_name(char *device_name)
+{
+	pcap_if_t *interface_list = NULL;
+	pcap_if_t *current_interface = NULL;
+	char errbuf[PCAP_ERRBUF_SIZE];
+	int r;
+
+	/* Use pcap to fetch all of the devices for capturing */
+	r = pcap_findalldevs(&interface_list, errbuf);
+	if (r == -1) {
+		fprintf(stderr, "pcap_findalldevs returned -1: %s\n", errbuf);
+		exit(1);
+	}
+
+	/* No devices?  Guess this isn't a valid one */
+	if (interface_list == NULL) {
+		return 0;
+	}
+
+	/* Check the list of interfaces */
+	for (
+		current_interface = interface_list;
+		current_interface != NULL;
+		current_interface = current_interface -> next ) {
+
+		if (strncmp(current_interface->name, device_name, strlen(current_interface->name)) == 0
+			&& strlen(device_name) == strlen(current_interface->name) ) {
+			pcap_freealldevs(interface_list);
+			return 1;
+		}
+	}
+
+	/* No matches?  Fail out */
+	pcap_freealldevs(interface_list);
+	return 0;
+}
+
 void print_stats(int junk)
 {
 	printf("\n");
@@ -603,6 +644,10 @@ int main(int argc, char *argv[])
 				break;
 			case 'I':
 				device_name = optarg;
+				if (check_device_name(device_name) == 0) {
+					fprintf(stderr, "Invalid capture device\n");
+					exit(1);
+				}
 				break;
 			case 'v':
 				verbose = 1;
