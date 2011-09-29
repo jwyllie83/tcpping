@@ -123,6 +123,12 @@ unsigned int tcpseq_to_orderseq(unsigned int tcpseq)
 	return (unsigned int)((tcpseq - sequence_offset) / 100);
 }
 
+int get_seenflag(unsigned int tcpseq)
+{
+	unsigned int orderseq = tcpseq_to_orderseq(tcpseq);
+	return ((seen_response_bitflags >> (orderseq % 32)) & 1);
+}
+
 void set_seenflag(unsigned int tcpseq, int flag)
 {
 	unsigned int orderseq = tcpseq_to_orderseq(tcpseq);
@@ -135,12 +141,6 @@ void set_seenflag(unsigned int tcpseq, int flag)
 			seen_response_bitflags = seen_response_bitflags ^ (1 << shift);
 		}
 	}
-}
-
-int get_seenflag(unsigned int tcpseq)
-{
-	unsigned int orderseq = tcpseq_to_orderseq(tcpseq);
-	return ((seen_response_bitflags >> (orderseq % 32)) & 1);
 }
 
 /* Sleep for a given number of milliseconds */
