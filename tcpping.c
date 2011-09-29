@@ -58,8 +58,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define tcp_flag_isset(tcpptr, flag) (((tcpptr->th_flags) & (flag)) == (flag))
 
-unsigned char forced_src_ip[4];
-u_int32_t src_ip;
+struct in_addr src_ip;
 int ttl = 64;
 char *myname;
 pid_t child_pid;
@@ -127,7 +126,6 @@ unsigned int tcpseq_to_orderseq(unsigned int tcpseq)
 void set_seenflag(unsigned int tcpseq, int flag)
 {
 	unsigned int orderseq = tcpseq_to_orderseq(tcpseq);
-	unsigned int bitmask;
 	unsigned int shift = orderseq % 32;
 
 	if (flag > 0) {
@@ -484,7 +482,7 @@ char *find_device()
 		256,                               /* TTL */
 		6,                                 /* Encapsulated TCP */
 		0,                                 /* Have libnet fill in the checksum */
-		src_ip,                            /* Source IP */
+		src_ip.s_addr,                     /* Source IP */
 		dest_ip,                           /* Destination IP */
 		0,                                 /* Payload */
 		0,                                 /* Length of the payload */
@@ -549,7 +547,7 @@ void inject_syn_packet(int sequence)
 		ttl,                                         /* TTL */
 		IPPROTO_TCP,                                 /* encap protocol */
 		0,                                           /* checksum */
-		src_ip,                                      /* source IP */
+		src_ip.s_addr,                               /* source IP */
 		dest_ip,                                     /* destination IP */
 		NULL,                                        /* payload */
 		0,                                           /* payload size */
@@ -590,6 +588,8 @@ int main(int argc, char *argv[])
 
 	myname = argv[0];
 
+	bzero(&src_ip, sizeof(struct in_addr));
+
 	while ((c = getopt(argc, argv, "c:p:i:vI:t:S:")) != -1) {
 		switch (c) {
 			case 'c':
@@ -611,10 +611,7 @@ int main(int argc, char *argv[])
 				ttl = atoi(optarg);
 				break;
 			case 'S':
-				forced_src_ip[0] = atoi(strtok(optarg, "."));
-				forced_src_ip[1] = atoi(strtok(NULL, "."));
-				forced_src_ip[2] = atoi(strtok(NULL, "."));
-				forced_src_ip[3] = atoi(strtok(NULL, "."));
+				r = inet_aton(optarg, &src_ip);
 				break;
 			default:
 				usage();
@@ -659,15 +656,13 @@ int main(int argc, char *argv[])
 		exit(1); 
 	}
 
-	if (forced_src_ip[0] != 0) {   
-		src_ip = ((forced_src_ip[3] << 24) | (forced_src_ip[2] << 16) | (forced_src_ip[1] << 8) | forced_src_ip[0]);
-	} else {
-		src_ip = libnet_get_ipaddr4(l);
-	}
-
-	if (src_ip == -1u) {
-		fprintf(stderr, "Unable to calculate source IP for tcp pings (needed for device capture).  Do you have an UP interface with no IP assigned?  Try specifying an interface with -I\n");
-		exit(1);
+	/* Figure out the source IP if we didn't specify one */
+	if (src_ip.s_addr == 0) {
+		src_ip.s_addr = libnet_get_ipaddr4(l);
+		if (src_ip.s_addr == -1u) {
+			fprintf(stderr, "Unable to calculate source IP for tcp pings (needed for device capture).  Do you have an UP interface with no IP assigned?  Try specifying an interface with -I\n");
+			exit(1);
+		}
 	}
 
 	dest_name = he->h_name;
