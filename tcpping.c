@@ -638,9 +638,17 @@ int main(int argc, char *argv[])
 				break;
 			case 'p':
 				dest_port = atoi(optarg);
+				if (dest_port < 1 || dest_port > 65535) {
+					fprintf(stderr, "Invalid port number: %d\n", dest_port);
+					exit(1);
+				}
 				break;
 			case 'i':
 				interval = (long)(atof(optarg) * 1000.0);
+				if (interval <= 0) {
+					fprintf(stderr, "Invalid interval\n", interval);
+					exit(1);
+				}
 				break;
 			case 'I':
 				device_name = optarg;
@@ -654,9 +662,15 @@ int main(int argc, char *argv[])
 				break;
 			case 't':
 				ttl = atoi(optarg);
+				if (ttl < 1 || ttl > 255) {
+					fprintf(stderr, "Invalid TTL\n");
+				}
 				break;
 			case 'S':
 				r = inet_aton(optarg, &src_ip);
+				if (r == 0) {
+					fprintf(stderr, "Invalid source address\n");
+				}
 				break;
 			default:
 				usage();
