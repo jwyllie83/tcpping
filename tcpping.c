@@ -646,7 +646,7 @@ int main(int argc, char *argv[])
 			case 'i':
 				interval = (long)(atof(optarg) * 1000.0);
 				if (interval <= 0) {
-					fprintf(stderr, "Invalid interval\n", interval);
+					fprintf(stderr, "Invalid interval\n");
 					exit(1);
 				}
 				break;
