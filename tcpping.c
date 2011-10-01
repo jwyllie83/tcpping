@@ -205,6 +205,12 @@ int check_device_name(char *device_name)
 	return 0;
 }
 
+void sanitize_environment()
+{
+	clearenv();
+	putenv("PATH=/bin:/usr/bin");
+}
+
 void print_stats(int junk)
 {
 	printf("\n");
@@ -617,6 +623,9 @@ void usage()
 
 int main(int argc, char *argv[])
 {
+	/* Create a safe environment for setuid safety */
+	sanitize_environment();
+
 	int r;
 	int c;
 	char *device_name = NULL;
