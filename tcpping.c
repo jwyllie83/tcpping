@@ -194,7 +194,7 @@ int check_device_name(char *device_name)
 		current_interface = current_interface -> next ) {
 
 		if (strncmp(current_interface->name, device_name, strlen(current_interface->name)) == 0
-			&& strlen(device_name) == strlen(current_interface->name) ) {
+			&& device_name[strlen(current_interface->name)] == '\0') {
 			pcap_freealldevs(interface_list);
 			return 1;
 		}
