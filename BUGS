@@ -1,1 +1,3 @@
-No known bugs at this time
+I'm trying to work out a portable way to properly drop all but the needed
+privileges (in Linux, that's CAP_NET_RAW).  However, I can't find a good piece
+of code that shows how to drop privileges besides resetting the user IDs.
