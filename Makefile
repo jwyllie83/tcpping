@@ -17,4 +17,4 @@ remove:
 	rm -f /usr/bin/tcpping
 
 clean:
-	rm -f ./tcpping ./tcpping.8.gz
+	rm -f ./tcpping ./tcpping.1.gz
