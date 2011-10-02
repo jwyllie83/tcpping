@@ -1,4 +1,3 @@
-- Add a manpage
 - Package for various Linux OSes (Debian, Fedora, etc)
 
 I'm trying to work out a portable way to properly drop all but the needed
