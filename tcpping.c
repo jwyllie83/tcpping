@@ -207,8 +207,12 @@ int check_device_name(char *device_name)
 
 void sanitize_environment()
 {
+#ifdef _SVID_SOURCE || _XOPEN_SOURCE
 	clearenv();
-	putenv("PATH=/bin:/usr/bin");
+#else
+	extern char **environ;
+	environ = NULL;
+#endif
 }
 
 void print_stats(int junk)
@@ -564,7 +568,7 @@ void inject_syn_packet(int sequence)
 		exit(1);
 	}
 
-	tcp_pkt = libnet_build_tcp(
+	r = libnet_build_tcp(
 		random() % 65536,                                 /* source port */
 		dest_port,                                        /* destination port */
 		sequence_offset + (sequence*100),                 /* sequence number */
@@ -580,13 +584,13 @@ void inject_syn_packet(int sequence)
 		tcp_pkt                                           /* libnet packet ref */
 	);
 
-	if (tcp_pkt == -1) {
+	if (r == -1) {
 		fprintf(stderr, "libnet_build_tcp: %s\n", libnet_geterror(l));
 		exit(1);
 	}
 
 	/* custom IP header; I couldn't get autobuild_ipv4 to work */
-	ip_pkt = libnet_build_ipv4(
+	r = libnet_build_ipv4(
 		LIBNET_IPV4_H + LIBNET_TCP_H,                /* packet length */
 		0,                                           /* tos */
 		htons((l->ptag_state) & 0x0000ffff),         /* IP id */
@@ -602,7 +606,7 @@ void inject_syn_packet(int sequence)
 		ip_pkt                                       /* libnet packet ref */
 	);
 
-	if (ip_pkt == -1) {
+	if (r == -1) {
 		fprintf(stderr, "libnet_autobuild_ipv4: %s\n", libnet_geterror(l));
 		exit(1);
 	}
@@ -647,10 +651,6 @@ int main(int argc, char *argv[])
 				break;
 			case 'p':
 				dest_port = atoi(optarg);
-				if (dest_port < 1 || dest_port > 65535) {
-					fprintf(stderr, "Invalid port number: %d\n", dest_port);
-					exit(1);
-				}
 				break;
 			case 'i':
 				interval = (long)(atof(optarg) * 1000.0);
