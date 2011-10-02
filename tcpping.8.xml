@@ -24,6 +24,10 @@ only diverge when necessary.  It sends out forged TCP SYN packets and listens
 for a SYN/ACK, RST, or ICMP Time Exceeded message.  It counts and reports on
 these results using an interface that is nearly identical to standard UNIX
 ping.</p> 
+
+<p><manref name='tcpping' section='1' /> works well in situations where ICMP
+messages are either thought to be less responsive (through ICMP rate-limiting)
+or filtered entirely via firewalls.</p>
 </description>
 
 <options>
@@ -54,6 +58,15 @@ ping.</p>
 and is therefore installed as set-uid root.  Though numerous steps are taken to
 ensure safety here (clearing the environment, safe input checks) there is
 always some inherent risk.</p>
+
+<p>It should also be noted that TCP SYN packets can overwhelm and crash some
+servers as TCP SYN packets yielding a SYN/ACK will typically allocate resources
+on the server.  Issuing this command with a very short interval to a server
+listening on that port is effectively a SYN flood which the server may or may
+not handle gracefully.</p>
+
+<p>More information about SYN floods can be found here: <url
+href='http://en.wikipedia.org/wiki/SYN_flood' /></p>
 </section>
 
 <section name='Author'>
