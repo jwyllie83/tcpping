@@ -1,0 +1,78 @@
+<?xml version='1.0' standalone='no'?>
+<!DOCTYPE manpage SYSTEM 'http://masqmail.cx/xmltoman/xmltoman.dtd'>
+<?xml-stylesheet type='text/xsl' href='http://masqmail.cx/xmltoman/xmltoman.xsl' ?>
+
+<manpage name='tcpping' section='1' desc='ping(8) written using TCP SYN probes'>
+
+<synopsis>
+	<cmd>tcpping 
+	<arg>[-v]</arg>
+	<arg>[-c count]</arg>
+	<arg>[-p port]</arg>
+	<arg>[-i interval]</arg>
+	<arg>[-I interface]</arg>
+	<arg>[-t ttl]</arg>
+	<arg>[-S srcaddress]</arg>
+	<arg>remote_host</arg>
+	</cmd>
+</synopsis>
+
+<description>
+<p><manref name='tcpping' section='1' /> is a utility designed to emulate
+standard <manref name='ping' section='8' /> in nearly every meaningful way and
+only diverge when necessary.  It sends out forged TCP SYN packets and listens
+for a SYN/ACK, RST, or ICMP Time Exceeded message.  It counts and reports on
+these results using an interface that is nearly identical to standard UNIX
+ping.</p> 
+</description>
+
+<options>
+	<option><p><opt>-v</opt></p>
+	<optdesc>Display more verbose output</optdesc></option>
+
+	<option><p><opt>-c COUNT</opt></p>
+	<optdesc>Send COUNT packets and exit</optdesc></option>
+
+	<option><p><opt>-p PORT</opt></p>
+	<optdesc>Send packets to PORT instead of TCP port 80</optdesc></option>
+
+	<option><p><opt>-i INTERVAL</opt></p>
+	<optdesc>Wait INTERVAL seconds between packets (can be a decimal).  Defaults to 1s</optdesc></option>
+
+	<option><p><opt>-I INTERFACE</opt></p>
+	<optdesc>Send packets from, and probe for responses on, the given INTERFACE.  Defaults to the first external UP interface though it is not very robust.</optdesc></option>
+
+	<option><p><opt>-t TTL</opt></p>
+	<optdesc>Set TTL as the IP TTL for the probes.  Defaults to "sufficiently high"</optdesc></option>
+
+	<option><p><opt>-S SRCADDRESS</opt></p>
+	<optdesc>Set SRCADDRESS as the source address instead of the default IP of INTERFACE</optdesc></option>
+</options>
+
+<section name='Security'>
+<p><manref name='tcpping' section='1' /> requires the CAP_NET_RAW capability
+and is therefore installed as set-uid root.  Though numerous steps are taken to
+ensure safety here (clearing the environment, safe input checks) there is
+always some inherent risk.</p>
+</section>
+
+<section name='Author'>
+<p>tcpping was originally written by Steven Kehlet &lt;steven@kehlet.cx&gt;.
+It is now maintained by Jim Wyllie &lt;jwyllie83@gmail.com&gt; and has received
+contributions from numerous individuals.</p>
+</section>
+
+<section name='Availability'>
+<p>The canonical version of this code is available on github at <url
+href='http://github.com/jwyllie83/tcpping' /></p>
+</section>
+
+<section name='Comments'>
+
+<p>This man page was compiled from XML using <manref name='xmltoman'
+section='1' />, found at <url href='http://masqmail.cx/xmltoman/' />.  You will
+need that program to edit this manpage.</p>
+
+</section>
+
+</manpage>
