@@ -58,8 +58,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define tcp_flag_isset(tcpptr, flag) (((tcpptr->th_flags) & (flag)) == (flag))
 
-unsigned char forced_src_ip[4];
-u_int32_t src_ip;
+struct in_addr src_ip;
 int ttl = 64;
 char *myname;
 pid_t child_pid;
@@ -124,10 +123,15 @@ unsigned int tcpseq_to_orderseq(unsigned int tcpseq)
 	return (unsigned int)((tcpseq - sequence_offset) / 100);
 }
 
+int get_seenflag(unsigned int tcpseq)
+{
+	unsigned int orderseq = tcpseq_to_orderseq(tcpseq);
+	return ((seen_response_bitflags >> (orderseq % 32)) & 1);
+}
+
 void set_seenflag(unsigned int tcpseq, int flag)
 {
 	unsigned int orderseq = tcpseq_to_orderseq(tcpseq);
-	unsigned int bitmask;
 	unsigned int shift = orderseq % 32;
 
 	if (flag > 0) {
@@ -137,12 +141,6 @@ void set_seenflag(unsigned int tcpseq, int flag)
 			seen_response_bitflags = seen_response_bitflags ^ (1 << shift);
 		}
 	}
-}
-
-int get_seenflag(unsigned int tcpseq)
-{
-	unsigned int orderseq = tcpseq_to_orderseq(tcpseq);
-	return ((seen_response_bitflags >> (orderseq % 32)) & 1);
 }
 
 /* Sleep for a given number of milliseconds */
@@ -164,6 +162,53 @@ long timestamp_difference(const struct timeval *one, const struct timeval *two)
 	difference += ((one->tv_sec - two->tv_sec) * 1000);
 	difference += ((one->tv_usec - two->tv_usec) / 1000);
 	return difference;
+}
+
+/* Function to validate that the given device is a valid one according to pcap;
+ * used for setuid safety to validate the device name.  device_name is
+ * untrusted here.
+ */
+int check_device_name(char *device_name)
+{
+	pcap_if_t *interface_list = NULL;
+	pcap_if_t *current_interface = NULL;
+	char errbuf[PCAP_ERRBUF_SIZE];
+	int r;
+
+	/* Use pcap to fetch all of the devices for capturing */
+	r = pcap_findalldevs(&interface_list, errbuf);
+	if (r == -1) {
+		fprintf(stderr, "pcap_findalldevs returned -1: %s\n", errbuf);
+		exit(1);
+	}
+
+	/* No devices?  Guess this isn't a valid one */
+	if (interface_list == NULL) {
+		return 0;
+	}
+
+	/* Check the list of interfaces */
+	for (
+		current_interface = interface_list;
+		current_interface != NULL;
+		current_interface = current_interface -> next ) {
+
+		if (strncmp(current_interface->name, device_name, strlen(current_interface->name)) == 0
+			&& device_name[strlen(current_interface->name)] == '\0') {
+			pcap_freealldevs(interface_list);
+			return 1;
+		}
+	}
+
+	/* No matches?  Fail out */
+	pcap_freealldevs(interface_list);
+	return 0;
+}
+
+void sanitize_environment()
+{
+	clearenv();
+	putenv("PATH=/bin:/usr/bin");
 }
 
 void print_stats(int junk)
@@ -484,7 +529,7 @@ char *find_device()
 		256,                               /* TTL */
 		6,                                 /* Encapsulated TCP */
 		0,                                 /* Have libnet fill in the checksum */
-		src_ip,                            /* Source IP */
+		src_ip.s_addr,                     /* Source IP */
 		dest_ip,                           /* Destination IP */
 		0,                                 /* Payload */
 		0,                                 /* Length of the payload */
@@ -549,7 +594,7 @@ void inject_syn_packet(int sequence)
 		ttl,                                         /* TTL */
 		IPPROTO_TCP,                                 /* encap protocol */
 		0,                                           /* checksum */
-		src_ip,                                      /* source IP */
+		src_ip.s_addr,                               /* source IP */
 		dest_ip,                                     /* destination IP */
 		NULL,                                        /* payload */
 		0,                                           /* payload size */
@@ -578,6 +623,9 @@ void usage()
 
 int main(int argc, char *argv[])
 {
+	/* Create a safe environment for setuid safety */
+	sanitize_environment();
+
 	int r;
 	int c;
 	char *device_name = NULL;
@@ -590,6 +638,8 @@ int main(int argc, char *argv[])
 
 	myname = argv[0];
 
+	bzero(&src_ip, sizeof(struct in_addr));
+
 	while ((c = getopt(argc, argv, "c:p:i:vI:t:S:")) != -1) {
 		switch (c) {
 			case 'c':
@@ -597,24 +647,39 @@ int main(int argc, char *argv[])
 				break;
 			case 'p':
 				dest_port = atoi(optarg);
+				if (dest_port < 1 || dest_port > 65535) {
+					fprintf(stderr, "Invalid port number: %d\n", dest_port);
+					exit(1);
+				}
 				break;
 			case 'i':
 				interval = (long)(atof(optarg) * 1000.0);
+				if (interval <= 0) {
+					fprintf(stderr, "Invalid interval\n");
+					exit(1);
+				}
 				break;
 			case 'I':
 				device_name = optarg;
+				if (check_device_name(device_name) == 0) {
+					fprintf(stderr, "Invalid capture device\n");
+					exit(1);
+				}
 				break;
 			case 'v':
 				verbose = 1;
 				break;
 			case 't':
 				ttl = atoi(optarg);
+				if (ttl < 1 || ttl > 255) {
+					fprintf(stderr, "Invalid TTL\n");
+				}
 				break;
 			case 'S':
-				forced_src_ip[0] = atoi(strtok(optarg, "."));
-				forced_src_ip[1] = atoi(strtok(NULL, "."));
-				forced_src_ip[2] = atoi(strtok(NULL, "."));
-				forced_src_ip[3] = atoi(strtok(NULL, "."));
+				r = inet_aton(optarg, &src_ip);
+				if (r == 0) {
+					fprintf(stderr, "Invalid source address\n");
+				}
 				break;
 			default:
 				usage();
@@ -659,15 +724,13 @@ int main(int argc, char *argv[])
 		exit(1); 
 	}
 
-	if (forced_src_ip[0] != 0) {   
-		src_ip = ((forced_src_ip[3] << 24) | (forced_src_ip[2] << 16) | (forced_src_ip[1] << 8) | forced_src_ip[0]);
-	} else {
-		src_ip = libnet_get_ipaddr4(l);
-	}
-
-	if (src_ip == -1u) {
-		fprintf(stderr, "Unable to calculate source IP for tcp pings (needed for device capture).  Do you have an UP interface with no IP assigned?  Try specifying an interface with -I\n");
-		exit(1);
+	/* Figure out the source IP if we didn't specify one */
+	if (src_ip.s_addr == 0) {
+		src_ip.s_addr = libnet_get_ipaddr4(l);
+		if (src_ip.s_addr == -1u) {
+			fprintf(stderr, "Unable to calculate source IP for tcp pings (needed for device capture).  Do you have an UP interface with no IP assigned?  Try specifying an interface with -I\n");
+			exit(1);
+		}
 	}
 
 	dest_name = he->h_name;

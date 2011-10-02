@@ -1,4 +1,13 @@
-- Add more options from ping, prioritized with usefulness x ease of implementation
 - Add a manpage
-- Secure for setuid use (like regular ping)
 - Package for various Linux OSes (Debian, Fedora, etc)
+
+I'm trying to work out a portable way to properly drop all but the needed
+privileges (in Linux, that's CAP_NET_RAW).  However, I can't find a good piece
+of code that shows how to drop privileges besides resetting the user IDs.
+
+A program with "added safety" would detect Linux and drop all privileges except
+CAP_NET_RAW, then maintain the privilege through a dropping of root privileges.
+I just haven't done it yet.
+
+As it is, I believe there are sufficient checks and balances on the program so
+as to permit setuid use.
