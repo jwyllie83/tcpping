@@ -33,6 +33,7 @@ development versions of libnet1 and pcap.  If you're on a Debian-based system
 sudo apt-get install build-essential
 sudo apt-get install libnet1-dev
 sudo apt-get install libpcap-dev
+sudo apt-get install xmltoman
 
 Or, alternatively, libnet1 is conveniently hosted on GitHub:
 http://github.com/sam-github/libnet
