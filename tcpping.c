@@ -1,6 +1,6 @@
 /*
+Copyright (c) 2010, 2011, 2012, 2014 Jim Wyllie
 Copyright (c) 2004, Steven Kehlet
-Copyright (c) 2010, 2011, Jim Wyllie
 Copyright (c) 2011, Ethan Blanton
 Copyright (c) 2011, Mateusz Viste
 All rights reserved.
@@ -55,6 +55,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <time.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/types.h>
+#include <ifaddrs.h>
 
 #define tcp_flag_isset(tcpptr, flag) (((tcpptr->th_flags) & (flag)) == (flag))
 
@@ -321,8 +323,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 		seqno = ntohl(tcp->th_seq);
 		packetno = tcpseq_to_orderseq(ntohl(tcp->th_seq));
 		r = memcpy(&(sent_times[packetno % PACKET_HISTORY]), &(header->ts), sizeof(struct timeval));
-		if (r < 0)
-		{
+		if (r < 0) {
 			perror("memcpy");
 			exit(1);
 		}
@@ -516,40 +517,83 @@ void sniff_packets(char *device_name)
 	pcap_close(handle);
 }
 
-/* use libnet to determine what device we'll be using to get to
- * dest_ip 
- * WARNING:  This function will wreck your libnet stack! we
- * therefore only call it in the child process */
-char *find_device()
+/*
+ * Find a device name given an IPv4 dotted-quad
+ * Could be made to work with IPv6 without much effort
+ * It doesn't matter right now, but this uses inet_ntoa, which isn't
+ * re-entrant.  So, don't start with the threading.  I doubt this is the only
+ * thing here that isn't thread-safe, but there ya go.
+ *
+ * Will allocate memory for the return device name, so be sure to free it
+ */
+char* find_device(char *dq)
 {
-	libnet_ptag_t t;
-	char *device_name;
+	/* Get all of the if headers... */
+	int errs = 0;
+	unsigned short family = 0;
+	struct ifaddrs* alladdrs = NULL;
+	struct ifaddrs* currentaddr = NULL;
+	struct sockaddr_in *iaddr = NULL;
+	char *test_dq = NULL;
+	char *found_name = NULL;
 
-	t = libnet_build_ipv4(
-		LIBNET_IPV4_H + LIBNET_TCP_H,      /* length */
-		0,                                 /* differentiated services */
-		0,                                 /* identification number */
-		0,                                 /* fragment offset */
-		256,                               /* TTL */
-		6,                                 /* Encapsulated TCP */
-		0,                                 /* Have libnet fill in the checksum */
-		src_ip.s_addr,                     /* Source IP */
-		dest_ip,                           /* Destination IP */
-		0,                                 /* Payload */
-		0,                                 /* Length of the payload */
-		l,                                 /* libnet handle */
-		0
-	);
-
-	if (t == -1) {
-		fprintf(stderr, "libnet_autobuild_ipv4: %s\n", libnet_geterror(l));
-		exit(1);
+	errs = getifaddrs(&alladdrs);
+	if (errs != 0) {
+		return NULL;
 	}
 
-	device_name = strdup((char *)libnet_getdevice(l));
+	/*
+	 * Loop through the returned device-families
+	 * (unit of iteration is device-family, so you can get a device many times)
+	 */
+	for (currentaddr = alladdrs; currentaddr != NULL; currentaddr = currentaddr -> ifa_next) {
+		if (currentaddr->ifa_addr == NULL) continue;
 
-	return device_name;
+		family = currentaddr->ifa_addr->sa_family;
+		if (family == AF_INET) {
+			iaddr = (struct sockaddr_in *)currentaddr->ifa_addr;
+			test_dq = inet_ntoa(iaddr->sin_addr);
+			if (strncmp(dq, test_dq, strlen(test_dq)) == 0) {
+				found_name = strdup(currentaddr->ifa_name);
+				break;
+			}
+		}
+	}
+
+	freeifaddrs(alladdrs);
+	return found_name;
 }
+
+/*
+ * Given a destination, will return the source IP on the system used to route
+ * there.  Makes use of non-reentrant functions.  Initializes the memory used
+ * in the return variable, so you'll want to free it later.
+ */
+char *find_source_ip(char *dq)
+{
+	char *source_dq;
+
+	/* Basically you just make the OS do it with a dummy socket... */
+	int test_fd = socket(AF_INET, SOCK_DGRAM, 0);
+	struct sockaddr_in dest, source;
+	socklen_t socket_length = sizeof(source);
+
+	/* Build the destination... */
+	bzero(&dest, sizeof(struct sockaddr_in));
+	dest.sin_family = AF_INET;
+	dest.sin_port = htons(2942);	/* "random" port */
+	if (inet_pton(AF_INET, dq, &(dest.sin_addr)) != 1) return NULL;
+
+	/* Try to "connect" to the UDP socket and retrieve the source socket... */
+	if(connect(test_fd, (struct sockaddr *)&dest, sizeof(dest)) != 0) return NULL;
+	if(getsockname(test_fd, (struct sockaddr *)&source, &socket_length) != 0) return NULL;
+	close(test_fd);
+
+	/* ... and convert that source socket to a dotted-quad */
+	source_dq = strdup(inet_ntoa(source.sin_addr));
+	return source_dq;
+}
+
 
 void inject_syn_packet(int sequence)
 {
@@ -562,8 +606,7 @@ void inject_syn_packet(int sequence)
 
 	struct timeval tv;
 	r = gettimeofday(&tv, NULL);
-	if (r < 0)
-	{
+	if (r < 0) {
 		perror("gettimeofday");
 		exit(1);
 	}
@@ -639,8 +682,10 @@ int main(int argc, char *argv[])
 	int pipefds[2];
 	char junk[256];
 	int sequence = 1;
+	char *src_quad = NULL;
 
 	myname = argv[0];
+	char *dest_quad = NULL;
 
 	bzero(&src_ip, sizeof(struct in_addr));
 
@@ -676,8 +721,8 @@ int main(int argc, char *argv[])
 				}
 				break;
 			case 'S':
-				r = inet_aton(optarg, &src_ip);
-				if (r == 0) {
+				src_quad = optarg;
+				if (inet_aton(src_quad, &src_ip) == 0) {
 					fprintf(stderr, "Invalid source address\n");
 				}
 				break;
@@ -698,7 +743,8 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	he = gethostbyname(argv[0]);
+	dest_quad = argv[0];
+	he = gethostbyname(dest_quad);
 	if (!he) {
 		herror("gethostbyname");
 		exit(1);
@@ -715,6 +761,29 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
+	/* Figure out the source IP if we didn't specify one */
+	if (src_ip.s_addr == 0) {
+		src_quad = find_source_ip(dest_quad);
+		if (src_quad == NULL) {
+			fprintf(stderr, "Unable to calculate source IP for tcp pings (needed for device capture).  Try specifying a source IP address with -S\n");
+			exit(1);
+		}
+
+		if (inet_aton(src_quad, &src_ip) == 0) {
+			fprintf(stderr, "Unable to compute source IP from calculated source dotted quad: %s\n", src_quad);
+			exit(1);
+		}
+	}
+
+	/* Figure out the source device name if we didn't specify one */
+	if (device_name == NULL) {
+		device_name = find_device(src_quad);
+		if (device_name == NULL) {
+			fprintf(stderr, "Unable to calculate if device from source IP (%s).  Is the source IP you specified bound to a device?\n", src_quad);
+			exit(1);
+		}
+	}
+
 	/* set up the libnet pointer and stack */
 	char errbuf[LIBNET_ERRBUF_SIZE];
 
@@ -722,15 +791,6 @@ int main(int argc, char *argv[])
 	if (l == NULL) {
 		fprintf(stderr, "libnet_init: %s", errbuf);
 		exit(1); 
-	}
-
-	/* Figure out the source IP if we didn't specify one */
-	if (src_ip.s_addr == 0) {
-		src_ip.s_addr = libnet_get_ipaddr4(l);
-		if (src_ip.s_addr == -1u) {
-			fprintf(stderr, "Unable to calculate source IP for tcp pings (needed for device capture).  Do you have an UP interface with no IP assigned?  Try specifying an interface with -I\n");
-			exit(1);
-		}
 	}
 
 	dest_name = he->h_name;
@@ -805,25 +865,11 @@ int main(int argc, char *argv[])
 	else {
 		close(pipefds[0]);
 		notify_fd = pipefds[1];
-
 		signal(SIGINT, print_stats);
 
-		/* Find the name of the device to listen on.  NOTE: This is
-		 * inherently dicey and I found a zillion instances where this
-		 * didn't work as advertised via the libnet stack.  It works on
-		 * very simple configurations (one 'up' public interface with a
-		 * valid IP that's to be used for all gateway traffic) but fails
-		 * in most other situations.
-		 * 
-		 * For reference, a warning is printed above to deal with this 
-		 * case so the user understands where bizarre errors may be
-		 * coming from.
-		 */
-		if (!device_name) {
-			device_name = find_device();
-		}
-
 		sniff_packets(device_name);
+
+		free(device_name);
 	}
 
 	return(0);
