@@ -17,3 +17,22 @@ Need to be able to find an if device name based on source IP
 
 All of these are easily solvable, just need some legwork.  Then I can do my own
 cross-platform compatibility.
+
+-----------------------------------------------------------------------------
+
+You have to specify an IP address to ping.  I should sort that out.
+
+-----------------------------------------------------------------------------
+
+I'm able to get this thing to respond to duplicate packets.  I'll resume
+ripping out libnet and see if that sticks around, but I don't like it.
+
+Things I tried:
+
+- Seeing if there were rogue sending processes that weren't killed by the
+  interrupt (there didn't seem to be, either by ps or tcpdump)
+- Adding and removing options (didn't seem to matter)
+
+What to try next:
+
+- tcpdump while doing a tcpping.  That should sort all of this out.
