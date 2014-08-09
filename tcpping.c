@@ -686,6 +686,7 @@ int main(int argc, char *argv[])
 
 	myname = argv[0];
 	char *dest_quad = NULL;
+	char *dest_host = NULL;
 
 	bzero(&src_ip, sizeof(struct in_addr));
 
@@ -743,8 +744,8 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	dest_quad = argv[0];
-	he = gethostbyname(dest_quad);
+	dest_host = argv[0];
+	he = gethostbyname(dest_host);
 	if (!he) {
 		herror("gethostbyname");
 		exit(1);
@@ -760,6 +761,17 @@ int main(int argc, char *argv[])
 		perror("bad address");
 		exit(1);
 	}
+
+	/* Get the dotted-quad from the resolved address as we need it later */
+	struct in_addr dest_addr;
+	bzero(&dest_addr, sizeof(struct in_addr));
+	dest_addr.s_addr = dest_ip;
+	dest_quad = inet_ntoa(dest_addr);
+	if (dest_quad == NULL) {
+		perror("Unable to convert returned address to dotted-quad; try pinging by IP address");
+		exit(1);
+	}
+	dest_quad = strdup(dest_quad);
 
 	/* Figure out the source IP if we didn't specify one */
 	if (src_ip.s_addr == 0) {
@@ -795,7 +807,7 @@ int main(int argc, char *argv[])
 
 	dest_name = he->h_name;
 	printf("TCP PING %s (%s:%u)\n", dest_name, 
-		   inet_ntoa2(dest_ip), dest_port
+		   dest_quad, dest_port
 	);
 
 	/* start seq# somewhere random so we're not SO obvious */
