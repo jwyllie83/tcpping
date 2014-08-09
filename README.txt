@@ -50,7 +50,7 @@ If you don't want to use root access to use it every time, you can setuid the
 program.  Keep in mind that any security vulnerabilities in tcpping could
 allow someone to execute arbitrary root-level code.
 
-sudo chmod root:root tcpping
+sudo chown root:root tcpping
 sudo chmod a+s tcpping
 
 --- Compatibility Issues ----------------------------------------------------
