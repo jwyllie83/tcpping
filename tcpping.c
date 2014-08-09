@@ -209,7 +209,9 @@ int check_device_name(char *device_name)
 
 void sanitize_environment()
 {
-#ifdef _SVID_SOURCE || _XOPEN_SOURCE
+#ifdef _SVID_SOURCE
+	clearenv();
+#elif _XOPEN_SOURCE
 	clearenv();
 #else
 	extern char **environ;
@@ -284,11 +286,9 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 {
 	int r, i;
 	int seqno, packetno;
-	struct ether_header *ethernet;
 	struct ip *ip;
 	struct tcphdr *tcp;
 	struct icmp *icmp;
-	u_char *payload;
 	float ms;
 	char *units = "ms";
 	char *flags;
@@ -297,13 +297,10 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 
 	int size_ethernet = sizeof(struct ether_header);
 	int size_ip = sizeof(struct ip);
-	int size_tcp = sizeof(struct tcphdr);
 
-	ethernet = (struct ether_header*)(packet);
 	ip = (struct ip*)(packet + size_ethernet);
 	tcp = (struct tcphdr*)(packet + size_ethernet + size_ip);
 	icmp = (struct icmp*)(packet + size_ethernet + size_ip);
-	payload = (u_char *)(packet + size_ethernet + size_ip + size_tcp);
 
 	if (verbose) {
 		show_packet(ip, ip->ip_p == IPPROTO_TCP ? tcp : NULL);
@@ -322,11 +319,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 
 		seqno = ntohl(tcp->th_seq);
 		packetno = tcpseq_to_orderseq(ntohl(tcp->th_seq));
-		r = memcpy(&(sent_times[packetno % PACKET_HISTORY]), &(header->ts), sizeof(struct timeval));
-		if (r < 0) {
-			perror("memcpy");
-			exit(1);
-		}
+		memcpy(&(sent_times[packetno % PACKET_HISTORY]), &(header->ts), sizeof(struct timeval));
 
 		total_syns++;
 	}
