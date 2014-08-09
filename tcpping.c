@@ -660,6 +660,9 @@ void inject_syn_packet(int sequence)
 		fprintf(stderr, "libnet_write: %s\n", libnet_geterror(l));
 		exit(1);
 	}
+
+	/* Get ready for the next packet */
+	libnet_clear_packet(l);
 }
 
 void usage()
