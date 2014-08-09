@@ -1,8 +1,3 @@
-Can't ping localhost on Mac OS X.  The pcap return looks garbled.  I'm guessing
-some headers aren't the right size when pinging from there.
-
------------------------------------------------------------------------------
-
 I'm able to get this thing to respond to duplicate packets.  I'll resume
 ripping out libnet and see if that sticks around, but I don't like it.
 
@@ -29,3 +24,8 @@ can do.  Let me know if you encounter this!
 -----------------------------------------------------------------------------
 
 There's still one warning on Mac machines, but it's perfectly harmless AFAICT.
+
+-----------------------------------------------------------------------------
+
+I should try to drop privileges to the one needed for Linux and/or Mac OS X in
+both the client and server.  It's a pretty limited set, after all.

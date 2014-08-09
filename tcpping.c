@@ -241,7 +241,7 @@ char *inet_ntoa2(in_addr_t addr)
 	return inet_ntoa(iaddr);
 }
 
-void show_packet(struct ip *ip, struct tcphdr *tcp)
+void show_packet(struct ip *ip, struct tcphdr *tcp, const struct pcap_pkthdr *header, const u_char *packet)
 {
 	int r;
 	struct timeval tv;
@@ -278,7 +278,44 @@ void show_packet(struct ip *ip, struct tcphdr *tcp)
 		printf(":%d %s", ntohs(tcp->th_dport), flags);
 	}
 
+	printf(" Length: %u", header->caplen);
 	printf("\n");
+
+	/* If we *really* want to be verbose, give us the packet and our delineations */
+	if (verbose >= 2) {
+		int i;
+		printf("\tPacket:");
+		for (i = 0; i < header->caplen; ++i) {
+			printf(" %02X", packet[i]);
+		}
+		printf("\n");
+	}
+}
+
+/* Determine if this is a valid packet that we care about */
+int valid_packet(struct ip *ip, struct tcphdr *tcp, struct icmp *icmp)
+{
+	/* In English:  "SYN packet that we sent out" */
+	if (ip->ip_dst.s_addr == dest_ip && ip->ip_p == IPPROTO_TCP && tcp_flag_isset(tcp, TH_SYN)) {
+		return 1;
+	}
+
+	/* In English:  "Response packet we're interested in, from the other host" */
+	else if (ip->ip_src.s_addr == dest_ip && ip->ip_p == IPPROTO_TCP &&
+			(
+				(tcp_flag_isset(tcp, TH_SYN) && tcp_flag_isset(tcp, TH_ACK)) || 
+				tcp_flag_isset(tcp, TH_RST)
+			)
+		) {
+			return 2;
+	}
+
+	/* In English: "Response packet we're interested in, but it's a Time Exceeded from some other host */
+	else if (ip->ip_src.s_addr == dest_ip && ip->ip_p == IPPROTO_ICMP && icmp->icmp_type == ICMP_TIMXCEED) {
+		return 3;
+	}
+
+	return 0;
 }
 
 /* callback to pcap_loop() */
@@ -295,20 +332,46 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 	struct timeval tv_synack;
 	struct timeval *tv_syn;
 
-	int size_ethernet = sizeof(struct ether_header);
+	int frame_offset = 0;
 	int size_ip = sizeof(struct ip);
+	int size_tcp = sizeof(struct tcphdr);
+	int is_valid_packet = 0;
 
-	ip = (struct ip*)(packet + size_ethernet);
-	tcp = (struct tcphdr*)(packet + size_ethernet + size_ip);
-	icmp = (struct icmp*)(packet + size_ethernet + size_ip);
+	/* It looks like there's a "feature" somewhere where you don't
+	 * necessarily get Ethernet headers, or can't count on the underlying device to
+	 * give you anything consistent (or anything at all).  For example, a Mac OS X
+	 * loopback will give you 4 bytes of header.  Loopback on Linux won't give you
+	 * any frame headers.  Internet on some will give you Ethernet, but not
+	 * necessarily.  I kicked around some solutions (none worked great).  The best
+	 * was to simply iterate and move the header around and determine if any of the
+	 * moves make this a packet I care about.  If so, parse it like that.  If not,
+	 * move on.  This seems "good enough" to work in virtually all cases with few
+	 * false positives. */
+	for (frame_offset = 0; (frame_offset + size_ip + size_tcp) <= header->caplen; ++frame_offset) {
+		ip = (struct ip*)(packet + frame_offset);
+		tcp = (struct tcphdr*)(packet + frame_offset + size_ip);
+		icmp = (struct icmp*)(packet + frame_offset + size_ip);
+
+		if (valid_packet(ip, tcp, icmp)) {
+			is_valid_packet = 1;
+			break;
+		}
+	}
 
 	if (verbose) {
-		show_packet(ip, ip->ip_p == IPPROTO_TCP ? tcp : NULL);
+		show_packet(ip, ip->ip_p == IPPROTO_TCP ? tcp : NULL, header, packet);
 		printf("\tSeen flags: ");
 		for (i = 0; i < 32; ++i) {
 			printf("%d", (seen_response_bitflags >> i) & 1);
 		}
 		printf("\n");
+	}
+
+	if (is_valid_packet == 0) {
+		if (verbose > 1) {
+			printf("\tHeader probing didn't find a valid packet, dropping...\n");
+			return;
+		}
 	}
 
 	/* In English:  "SYN packet that we sent out" */
@@ -412,8 +475,8 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 		struct ip *retip;
 		struct tcphdr *rettcp;
 
-		retip = (struct ip*)(packet + size_ethernet + size_ip + 8);
-		rettcp = (struct tcphdr *)(packet + size_ethernet + size_ip + 8 + size_ip);
+		retip = (struct ip*)(packet + frame_offset + size_ip + 8);
+		rettcp = (struct tcphdr *)(packet + frame_offset + size_ip + 8 + size_ip);
 
 		/* After we build the headers for ICMP, check the hosts / protocol / etc. */
 		if (retip->ip_dst.s_addr == dest_ip && retip->ip_p == IPPROTO_TCP && 
@@ -488,6 +551,10 @@ void sniff_packets(char *device_name)
 		"(host %s and port %u) or icmp[icmptype] == icmp-timxceed",
 		inet_ntoa2(dest_ip), dest_port
 	);
+
+	if (verbose) {
+		printf("pcap filter expression: %s\n", filter_expression);
+	}
 
 	r = pcap_compile(handle, &filter, filter_expression, 0, mask);
 	if (r < 0) {
@@ -709,7 +776,7 @@ int main(int argc, char *argv[])
 				}
 				break;
 			case 'v':
-				verbose = 1;
+				++verbose;
 				break;
 			case 't':
 				ttl = atoi(optarg);
