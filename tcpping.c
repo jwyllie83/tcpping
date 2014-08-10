@@ -60,6 +60,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define tcp_flag_isset(tcpptr, flag) (((tcpptr->th_flags) & (flag)) == (flag))
 
+/* Define the types of packets that we're sniffing for on the wire */
+#define UNINTERESTING 0
+#define SYN_FROM_US 1
+#define SYNACK_FROM_THEM 2
+#define ICMP_TIMEEXCEEDED 3
+
 struct in_addr src_ip;
 int ttl = 64;
 char *myname;
@@ -293,11 +299,11 @@ void show_packet(struct ip *ip, struct tcphdr *tcp, const struct pcap_pkthdr *he
 }
 
 /* Determine if this is a valid packet that we care about */
-int valid_packet(struct ip *ip, struct tcphdr *tcp, struct icmp *icmp)
+int get_packet_type(struct ip *ip, struct tcphdr *tcp, struct icmp *icmp)
 {
 	/* In English:  "SYN packet that we sent out" */
 	if (ip->ip_dst.s_addr == dest_ip && ip->ip_p == IPPROTO_TCP && tcp_flag_isset(tcp, TH_SYN)) {
-		return 1;
+		return SYN_FROM_US;
 	}
 
 	/* In English:  "Response packet we're interested in, from the other host" */
@@ -307,12 +313,12 @@ int valid_packet(struct ip *ip, struct tcphdr *tcp, struct icmp *icmp)
 				tcp_flag_isset(tcp, TH_RST)
 			)
 		) {
-			return 2;
+			return SYNACK_FROM_THEM;
 	}
 
 	/* In English: "Response packet we're interested in, but it's a Time Exceeded from some other host */
-	else if (ip->ip_src.s_addr == dest_ip && ip->ip_p == IPPROTO_ICMP && icmp->icmp_type == ICMP_TIMXCEED) {
-		return 3;
+	else if (ip->ip_dst.s_addr == src_ip.s_addr && ip->ip_p == IPPROTO_ICMP && icmp->icmp_type == ICMP_TIMXCEED) {
+		return ICMP_TIMEEXCEEDED;
 	}
 
 	return 0;
@@ -323,9 +329,9 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 {
 	int r, i;
 	int seqno, packetno;
-	struct ip *ip;
-	struct tcphdr *tcp;
-	struct icmp *icmp;
+	struct ip *ip = NULL;
+	struct tcphdr *tcp = NULL;
+	struct icmp *icmp = NULL;
 	float ms;
 	char *units = "ms";
 	char *flags;
@@ -335,7 +341,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 	int frame_offset = 0;
 	int size_ip = sizeof(struct ip);
 	int size_tcp = sizeof(struct tcphdr);
-	int is_valid_packet = 0;
+	int packet_type = 0;
 
 	/* It looks like there's a "feature" somewhere where you don't
 	 * necessarily get Ethernet headers, or can't count on the underlying device to
@@ -352,8 +358,8 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 		tcp = (struct tcphdr*)(packet + frame_offset + size_ip);
 		icmp = (struct icmp*)(packet + frame_offset + size_ip);
 
-		if (valid_packet(ip, tcp, icmp)) {
-			is_valid_packet = 1;
+		packet_type = get_packet_type(ip, tcp, icmp);
+		if (packet_type != UNINTERESTING) {
 			break;
 		}
 	}
@@ -367,17 +373,15 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 		printf("\n");
 	}
 
-	if (is_valid_packet == 0) {
+	if (packet_type == UNINTERESTING) {
 		if (verbose > 1) {
 			printf("\tHeader probing didn't find a valid packet, dropping...\n");
 			return;
 		}
 	}
 
-	/* In English:  "SYN packet that we sent out" */
-	if (ip->ip_dst.s_addr == dest_ip && ip->ip_p == IPPROTO_TCP &&
-		tcp_flag_isset(tcp, TH_SYN)) {
-
+	/* SYN packet that we sent out? */
+	if (packet_type == SYN_FROM_US) {
 		/* Store the send time of the packet */
 
 		seqno = ntohl(tcp->th_seq);
@@ -387,14 +391,8 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 		total_syns++;
 	}
 
-	/* In English:  "Response packet we're interested in, from the other host" */
-	else if (ip->ip_src.s_addr == dest_ip && ip->ip_p == IPPROTO_TCP &&
-			(
-				(tcp_flag_isset(tcp, TH_SYN) && tcp_flag_isset(tcp, TH_ACK)) || 
-				tcp_flag_isset(tcp, TH_RST)
-			)
-		) {
-
+	/* SYN/ACK returned from them? */
+	else if (packet_type == SYNACK_FROM_THEM) {
 		r = gettimeofday(&tv_synack, NULL);
 		if (r < 0) {
 			perror("gettimeofday");
@@ -470,7 +468,7 @@ void got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *pa
 	}
 
 	/* In English: "Response packet we're interested in, but it's a Time Exceeded from some other host */
-	else if (ip->ip_p == IPPROTO_ICMP && icmp->icmp_type == ICMP_TIMXCEED) {
+	else if (packet_type == ICMP_TIMEEXCEEDED) {
 
 		struct ip *retip;
 		struct tcphdr *rettcp;
