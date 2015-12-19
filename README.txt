@@ -48,7 +48,8 @@ make
 
 If you don't want to use root access to use it every time, you can setuid the
 program.  Keep in mind that any security vulnerabilities in tcpping could
-allow someone to execute arbitrary root-level code.
+allow someone to execute arbitrary root-level code, so do this at your own
+risk.
 
 sudo chown root:root tcpping
 sudo chmod a+s tcpping
@@ -57,9 +58,9 @@ sudo chmod a+s tcpping
 
 libnet1 is a retooling of the old libnet hosted on SourceForge at
 http://packetfactory.net/ by Peter Wang.  The note from Sam at GitHub is that
-the upstream maintainer is unresponsive and the project is unmaintained.  He
-made subtle changes to the API, but it should still mostly work with an old
-version of libnet.
+the upstream maintainer is unresponsive and the project is unmaintained.  Older
+versions of libnet based on Peter Wang's implementation will no longer work.
+You can find Sam's implementation at https://github.com/sam-github/libnet
 
 --- Related Tools -----------------------------------------------------------
 
@@ -72,3 +73,7 @@ many more features and is more complicated.
 nmap
 http://nmap.org/ -- Full-service security standard compiled as a package with
 nearly all UNIX-like distributions.  
+
+mtr
+http://www.bitwizard.nl/mtr/ -- Traceroute combined with ping for full-route
+loss statistics.  Newer versions support TCP pings.

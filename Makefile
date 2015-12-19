@@ -3,7 +3,7 @@ all: tcpping manpage
 uninstall: remove
 
 tcpping: tcpping.c
-	gcc -Wall -g tcpping.c -o tcpping -lnet -lpcap
+	$(CC) -Wall -g tcpping.c -o tcpping $(CFLAGS) -lnet -lpcap
 
 manpage: tcpping.1.xml
 	xmltoman tcpping.1.xml | gzip > tcpping.1.gz
