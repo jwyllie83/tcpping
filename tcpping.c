@@ -78,6 +78,7 @@ int sequence_offset = 0;
 char *dest_name;
 in_addr_t dest_ip = 0;
 u_short dest_port = 80;
+u_short src_port = 0;
 
 float min_ping = -1;
 float avg_ping = 0;
@@ -657,6 +658,7 @@ void inject_syn_packet(int sequence)
 {
 	int c;
 	int r;
+	u_short s = src_port ? src_port : random() % 65536;
 
 	/* Build the custom TCP header.  We have a weird hack here:
 	 * We use the sequence number to define the packet order
@@ -670,7 +672,7 @@ void inject_syn_packet(int sequence)
 	}
 
 	r = libnet_build_tcp(
-		random() % 65536,                                 /* source port */
+		s,                                                /* source port */
 		dest_port,                                        /* destination port */
 		sequence_offset + (sequence*100),                 /* sequence number */
 		0,                                                /* acknowledgement num */
@@ -751,7 +753,7 @@ int main(int argc, char *argv[])
 
 	bzero(&src_ip, sizeof(struct in_addr));
 
-	while ((c = getopt(argc, argv, "c:p:i:vI:t:S:")) != -1) {
+	while ((c = getopt(argc, argv, "c:p:i:vI:t:S:P:")) != -1) {
 		switch (c) {
 			case 'c':
 				count = atoi(optarg);
@@ -787,6 +789,9 @@ int main(int argc, char *argv[])
 				if (inet_aton(src_quad, &src_ip) == 0) {
 					fprintf(stderr, "Invalid source address\n");
 				}
+				break;
+			case 'P':
+				src_port = atoi(optarg);
 				break;
 			default:
 				usage();
