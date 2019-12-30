@@ -727,7 +727,7 @@ void inject_syn_packet(int sequence)
 
 void usage()
 {
-	fprintf(stderr, "%s: [-v] [-c count] [-p port] [-i interval] [-I interface] [-t ttl] [-S srcaddress] remote_host\n", myname);
+	fprintf(stderr, "%s: [-v] [-c count] [-p destport] [-i interval] [-I interface] [-t ttl] [-S srcaddress] [-P srcport] remote_host\n", myname);
 	exit(0);
 }
 
