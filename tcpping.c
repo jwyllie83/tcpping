@@ -753,7 +753,7 @@ int main(int argc, char *argv[])
 
 	bzero(&src_ip, sizeof(struct in_addr));
 
-	while ((c = getopt(argc, argv, "c:p:i:vI:t:S:P:")) != -1) {
+	while ((c = getopt(argc, argv, "c:p:i:vI:t:S:P:h")) != -1) {
 		switch (c) {
 			case 'c':
 				count = atoi(optarg);
@@ -793,6 +793,7 @@ int main(int argc, char *argv[])
 			case 'P':
 				src_port = atoi(optarg);
 				break;
+			case 'h':
 			default:
 				usage();
 		}
