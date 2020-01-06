@@ -790,6 +790,7 @@ int main(int argc, char *argv[])
 				ttl = atoi(optarg);
 				if (ttl < 1 || ttl > 255) {
 					fprintf(stderr, "Invalid TTL\n");
+					exit(1);
 				}
 				break;
 			case 'v':
