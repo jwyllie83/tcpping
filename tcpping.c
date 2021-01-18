@@ -727,7 +727,7 @@ void inject_syn_packet(int sequence)
 
 void usage()
 {
-	fprintf(stderr, "%s: [-v] [-c count] [-p port] [-i interval] [-I interface] [-t ttl] [-S srcaddress] remote_host\n", myname);
+	fprintf(stderr, "%s: [-c count] [-h] [-i interval] [-I interface] [-p destport] [-P srcport] [-S srcaddress] [-t ttl] [-v] remote_host\n", myname);
 	exit(0);
 }
 
@@ -753,14 +753,13 @@ int main(int argc, char *argv[])
 
 	bzero(&src_ip, sizeof(struct in_addr));
 
-	while ((c = getopt(argc, argv, "c:p:i:vI:t:S:P:")) != -1) {
+	while ((c = getopt(argc, argv, "c:hi:I:p:P:S:t:v")) != -1) {
 		switch (c) {
 			case 'c':
 				count = atoi(optarg);
 				break;
-			case 'p':
-				dest_port = atoi(optarg);
-				break;
+			case 'h':
+				usage();
 			case 'i':
 				interval = (long)(atof(optarg) * 1000.0);
 				if (interval <= 0) {
@@ -775,14 +774,11 @@ int main(int argc, char *argv[])
 					exit(1);
 				}
 				break;
-			case 'v':
-				++verbose;
+			case 'p':
+				dest_port = atoi(optarg);
 				break;
-			case 't':
-				ttl = atoi(optarg);
-				if (ttl < 1 || ttl > 255) {
-					fprintf(stderr, "Invalid TTL\n");
-				}
+			case 'P':
+				src_port = atoi(optarg);
 				break;
 			case 'S':
 				src_quad = optarg;
@@ -790,9 +786,17 @@ int main(int argc, char *argv[])
 					fprintf(stderr, "Invalid source address\n");
 				}
 				break;
-			case 'P':
-				src_port = atoi(optarg);
+			case 't':
+				ttl = atoi(optarg);
+				if (ttl < 1 || ttl > 255) {
+					fprintf(stderr, "Invalid TTL\n");
+					exit(1);
+				}
 				break;
+			case 'v':
+				++verbose;
+				break;
+
 			default:
 				usage();
 		}
