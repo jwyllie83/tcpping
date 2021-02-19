@@ -44,6 +44,9 @@ Build with the following:
 
 make
 
+Build a debian package:
+make deb
+
 --- Setuid and tcpping ------------------------------------------------------
 
 If you don't want to use root access to use it every time, you can setuid the

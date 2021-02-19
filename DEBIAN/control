@@ -1,0 +1,10 @@
+Source: tcpping
+Priority: optional
+Maintainer: Jade Cheng <chengjiayao@bytedance.com>
+Build-Depends: libnet1, pcap
+Standards-Version: 1.0.0
+Version: 1.0.0
+Package: tcpping
+Architecture: amd64
+Description: This is a unstable package for make a deb file for tcpping
+     Source files are from https://github.com/jwyllie83/tcpping
